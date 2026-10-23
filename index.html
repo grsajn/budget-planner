@@ -220,6 +220,15 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
   <button class="primary" style="background:none;color:var(--muted);border:1.5px solid var(--line)" id="signout">Sign out</button>
 </div></div>
 
+<div class="sheet" id="savSheet" role="dialog" aria-modal="true" aria-label="Amount moved"><div class="card">
+  <div class="cardhead"><h3 id="savTitle">Amount moved</h3><button class="iconbtn" data-close="savSheet" aria-label="Close">✕</button></div>
+  <div class="note" id="savNote"></div>
+  <div class="amountin" style="margin-top:10px"><span style="font-size:40px;font-weight:700;color:var(--muted)">€</span>
+    <input id="savAmt" inputmode="decimal" placeholder="0" aria-label="Amount in euros"></div>
+  <button class="primary" id="saveSav">Save</button>
+  <button class="primary" style="background:none;color:var(--muted);border:1.5px solid var(--line)" id="clearSav">Nothing moved this month</button>
+</div></div>
+
 <div class="sheet" id="envSheet" role="dialog" aria-modal="true" aria-label="Envelope details"><div class="card">
   <div class="cardhead"><h3 id="envTitle"></h3><button class="iconbtn" data-close="envSheet" aria-label="Close">✕</button></div>
   <div id="envSummary"></div>
@@ -294,6 +303,7 @@ const DEFAULTS = {
     {id:'health',name:'Health',budget:500,color:PALETTE[7]},
     {id:'subs',name:'Subscriptions & fees',budget:90,color:PALETTE[8]},
     {id:'other',name:'Fun, home, kid',budget:120,color:PALETTE[9]},
+    {id:'cash',name:'Cash withdrawals',budget:100,color:PALETTE[10]},
     {id:'carfix',name:'Car upkeep (paid from fund)',budget:0,fund:'carfund',color:PALETTE[5]}
   ],
   fixed:[
@@ -335,6 +345,8 @@ function normalize(src){
     s.pots.emerg.start = num(src && src.emergStart);
     s.pots.carfund.start = num(src && src.carfundStart);
   } else s.pots = Object.assign(clone(DEFAULTS.pots), src.pots);
+  if(!s.categories.some(c=>c.id==='cash')){ const i=s.categories.findIndex(c=>c.fund); const cash=clone(DEFAULTS.categories.find(c=>c.id==='cash'));
+    if(i>=0) s.categories.splice(i,0,cash); else s.categories.push(cash); }
   if(!s.categories.some(c=>c.id==='carfix')) s.categories.push(clone(DEFAULTS.categories.find(c=>c.id==='carfix')));
   DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id)) s.savings.push(clone(d)); });
   ['v2','v3','v4','v5','emergStart','carfundStart'].forEach(k=>delete s[k]);
@@ -401,9 +413,10 @@ function startSync(){
   const o={includeMetadataChanges:true};
   unsubs.push(fb.onSnapshot(R.settings,o,snap=>{
     if(!snap.exists()){ if(!snap.metadata.fromCache) w(fb.setDoc(R.settings, normalize(DEFAULTS))); return; }
-    state.settings = normalize(snap.data()); track('s',snap); render();
+    state.settings = normalize(snap.data()); track('s',snap); render(); migrateCash();
   },fail));
-  unsubs.push(fb.onSnapshot(R.expenses,o,snap=>{ state.expenses=snap.docs.map(d=>({...d.data(),id:d.id})); track('e',snap); render(); },fail));
+  unsubs.push(fb.onSnapshot(R.expenses,o,snap=>{ state.expenses=snap.docs.map(d=>({...d.data(),id:d.id})); track('e',snap); render();
+    if(!snap.metadata.fromCache){ expFromServer=true; migrateCash(); } },fail));
   unsubs.push(fb.onSnapshot(R.months,o,snap=>{ const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); state.months=m;
     if(!snap.metadata.fromCache) monthsFromServer=true; track('m',snap); render(); lockClosedMonths(); },fail));
   unsubs.push(fb.onSnapshot(R.payouts,o,snap=>{ state.payouts=snap.docs.map(d=>({...d.data(),id:d.id})); track('p',snap); render(); },fail));
@@ -503,9 +516,10 @@ function render(){
   };
   $('savings').innerHTML = `<div class="row"><div class="rowhead"><span class="name"><b>Total saved</b></span><span class="amt"><b>${eur(b.total)}</b></span></div>
       <div class="note">Euro savings, car fund, your share of the family account and your son's account</div></div>` +
-    s.savings.map(sv=>{ const done=sd[sv.id]!=null;
-      return `<div class="row"><div class="check"><div><div class="name">${esc(sv.name)}</div><div class="note">${eur(sv.amount)} a month</div></div>
-        <button class="tick ${done?'done':''}" data-sav="${sv.id}">${done?'Moved':'Mark moved'}</button></div>${potLine[sv.id]||''}</div>`;
+    s.savings.map(sv=>{ const done=sd[sv.id]!=null, amt=done?moveAmt(sd[sv.id]):0;
+      return `<div class="row"><div class="check"><div><div class="name">${esc(sv.name)}</div><div class="note">${eur(sv.amount)} a month planned
+          <button class="rm" style="color:var(--sea);margin-left:6px" data-savamt="${sv.id}">${done?'Change amount':'Other amount'}</button></div></div>
+        <button class="tick ${done?'done':''}" data-sav="${sv.id}">${done?'Moved '+eur(amt):'Mark moved'}</button></div>${potLine[sv.id]||''}</div>`;
     }).join('') + (b.emerg>=s.emergGoal && s.emergGoal>0 ? `<div class="row"><div class="hint">Euro savings reached its goal. Raise the goal for the house, or move the monthly amount into family investing.</div></div>`:'');
 
   const fx=s.fixed.filter(fixedActive), garage=s.fixed.find(f=>f.id==='gar');
@@ -574,6 +588,10 @@ document.addEventListener('click',e=>{
     const amount=state.settings.savings.find(v=>v.id===id).amount;
     const date = view===monthKey(new Date()) ? today() : view+'-28';
     w(fb.setDoc(fb.doc(R.months,view),{savingsDone:{[id]: cur!=null ? fb.deleteField() : {amount,date}}},{merge:true})); }
+  if(t.dataset.savamt){ const sv=state.settings.savings.find(v=>v.id===t.dataset.savamt), cur=((state.months[view]||{}).savingsDone||{})[sv.id];
+    savEdit=sv.id; $('savTitle').textContent=sv.name;
+    $('savNote').textContent=`How much did you move in ${monthName(view)}? Planned is ${eur(sv.amount)}. If you moved money more than once, enter the total.`;
+    $('savAmt').value = cur!=null ? moveAmt(cur) : ''; $('savSheet').classList.add('open'); setTimeout(()=>$('savAmt').focus(),150); return; }
   if(t.dataset.fix){ const id=t.dataset.fix, cur=!!((state.months[view]||{}).fixedDone||{})[id];
     w(fb.setDoc(fb.doc(R.months,view),{fixedDone:{[id]: cur ? fb.deleteField() : true}},{merge:true})); }
   if(t.dataset.rm){
@@ -886,7 +904,7 @@ function classify(tx, rules){
   }
   if(tx.src==='intesa'){
     if(/SKUPNA ACTIVA/.test(D)) return sug('s',0,'Mastercard bill (its purchases are imported separately)');
-    if(/^(VI )?BA |\bDVIG GOTOVINE\b/.test(D)) return amt>=300 ? sug('s',0,'Cash for paying Chase') : sug('c:other',1,'Cash, what was it for?');
+    if(/^(VI )?BA |\bDVIG GOTOVINE\b/.test(D)) return amt>=300 ? sug('s',0,'Cash for paying Chase') : sug('c:cash',0,'Cash withdrawal');
     if(/\bREVOLUT\b/.test(D)) return amt>=300 ? sug('s',0,'Transfer for paying Chase') : sug('c:other',1,'Revolut transfer');
     if(/\bGARAZA \d+/.test(D)) return sug('t:gar',0,'Garage payment');
     if(/ZAV SAVA|NADOMESTILO|CLANARINA|STROSKI ZA VODENJE|PROVIZIJA/.test(D)) return sug('t:misc',0,'Insurance or bank fee');
@@ -1036,6 +1054,28 @@ $('envAdd').onclick=()=>{
   const id=envOpen; $('envSheet').classList.remove('open'); $('openAdd').onclick();
   addCat=id; document.querySelectorAll('#catChips .chip').forEach(ch=>ch.classList.toggle('on',ch.dataset.cat===id)); updateAdd();
 };
+
+// ---------- custom savings amount ----------
+let savEdit=null;
+function saveSavAmount(amount){
+  const date = view===monthKey(new Date()) ? today() : view+'-28';
+  w(fb.setDoc(fb.doc(R.months,view),{savingsDone:{[savEdit]: amount>0 ? {amount:Math.round(amount*100)/100,date} : fb.deleteField()}},{merge:true}));
+  $('savSheet').classList.remove('open');
+}
+$('saveSav').onclick=()=>saveSavAmount(num($('savAmt').value));
+$('clearSav').onclick=()=>saveSavAmount(0);
+
+// one-time: earlier cash withdrawals were filed under "Fun, home, kid"
+let cashChecked=false, expFromServer=false;
+function migrateCash(){
+  if(cashChecked || !state.settings || !expFromServer) return; cashChecked=true;
+  if(state.settings.cashMoved) return;
+  const old=state.expenses.filter(e=>e.cat==='other' && /^cash withdrawal$/i.test((e.note||'').trim()));
+  const b=fb.writeBatch(db);
+  old.forEach(e=>b.update(fb.doc(R.expenses,e.id),{cat:'cash'}));
+  b.set(R.settings,{cashMoved:true},{merge:true});
+  w(b.commit());
+}
 
 boot();
 </script>
