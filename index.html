@@ -69,6 +69,7 @@ h2{font-size:20px;font-weight:700;margin:26px 4px 10px}
 .check{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .tick{min-width:96px;height:36px;border-radius:18px;border:1.5px solid var(--sea);background:none;color:var(--sea);font-size:14px;font-weight:600}
 .tick.done{background:var(--sea);color:var(--on-sea)}
+.tick.done::before{content:'';display:inline-block;width:5px;height:10px;margin:0 8px 2px 0;border:solid currentColor;border-width:0 2.5px 2.5px 0;transform:rotate(45deg);vertical-align:middle}
 .note{font-size:13px;color:var(--muted);margin-top:3px}
 .plan{font-size:15px}
 .plan .rowhead{padding:9px 0}
