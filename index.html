@@ -122,6 +122,21 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
 .h2chev{font-size:22px;color:var(--muted);transition:transform .2s;display:inline-block}
 .h2toggle[aria-expanded="true"] .h2chev{transform:rotate(90deg)}
 @media (prefers-reduced-motion: reduce){.h2chev{transition:none}}
+.searchbar{display:flex;gap:10px;align-items:center;margin:0 0 8px}
+.searchbar .field{flex:1}
+.allm{display:flex;align-items:center;gap:6px;margin:0;font-size:14px;color:var(--ink);white-space:nowrap}
+.allm input{width:20px;height:20px}
+.hero .big{cursor:pointer}
+.hero .tapcharts{font-size:13px;color:var(--muted);margin-top:4px}
+.donutwrap{display:flex;justify-content:center;margin:6px 0 10px}
+.legend .rowhead{padding:8px 0;border-bottom:1px solid var(--line)}
+.sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:8px;vertical-align:middle}
+.bars{width:100%;height:auto;display:block}
+.bars text{fill:var(--muted);font-size:11px;font-family:inherit}
+.bars .sel{fill:var(--ink);font-weight:700}
+.keyrow{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--muted);margin:6px 0 4px}
+.statnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.statnav .m{font-size:17px;font-weight:600}
 .hint{background:var(--sea-soft);border-radius:14px;padding:12px 14px;font-size:14px;margin-top:12px}
 .login{position:fixed;inset:0;overflow:auto;z-index:20;display:flex;align-items:center;justify-content:center;
   padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
@@ -180,7 +195,14 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
   <h2>Monthly plan</h2>
   <div class="panel plan" id="plan"></div>
   <h2><button class="h2toggle" id="expToggle" aria-expanded="false" aria-controls="expenses"><span>Expenses</span><span class="h2meta" id="expMeta"></span><span class="h2chev" aria-hidden="true">›</span></button></h2>
-  <div class="panel exp" id="expenses"></div>
+  <div id="expWrap" hidden>
+    <div class="searchbar">
+      <input class="field" id="expSearch" type="search" placeholder="Search shop, envelope, date or amount" autocomplete="off" aria-label="Search expenses">
+      <label class="allm"><input type="checkbox" id="expAllMonths"> All months</label>
+    </div>
+    <div class="note" id="expCount" style="margin:0 4px 8px"></div>
+    <div class="panel exp" id="expenses"></div>
+  </div>
   <div style="text-align:center;margin-top:22px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
     <button class="tick" style="min-width:150px" id="openSettings">Edit budget</button>
     <button class="tick" style="min-width:150px" id="openBackup">Back up, export, import</button>
@@ -226,6 +248,26 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
   <div id="setForm"></div>
   <button class="primary" id="saveSet">Save budget</button>
   <button class="primary" style="background:none;color:var(--muted);border:1.5px solid var(--line)" id="signout">Sign out</button>
+</div></div>
+
+<div class="sheet" id="statSheet" role="dialog" aria-modal="true" aria-label="Spending charts"><div class="card">
+  <div class="cardhead"><h3>Spending overview</h3><button class="iconbtn" data-close="statSheet" aria-label="Close">✕</button></div>
+  <div class="statnav"><button class="iconbtn" id="stPrev" aria-label="Previous month">‹</button><span class="m" id="stMonth"></span><button class="iconbtn" id="stNext" aria-label="Next month">›</button></div>
+  <div class="donutwrap" id="stDonut"></div>
+  <div class="legend" id="stLegend"></div>
+  <div class="sec" style="margin-top:22px">Month by month</div>
+  <div class="keyrow" id="stKey"></div>
+  <div id="stBars"></div>
+  <div class="panel plan" id="stDetail" style="margin-top:10px"></div>
+</div></div>
+
+<div class="sheet" id="incSheet" role="dialog" aria-modal="true" aria-label="Income this month"><div class="card">
+  <div class="cardhead"><h3 id="incTitle">Income</h3><button class="iconbtn" data-close="incSheet" aria-label="Close">✕</button></div>
+  <div class="note" id="incNote"></div>
+  <div class="amountin" style="margin-top:10px"><span style="font-size:40px;font-weight:700;color:var(--muted)">€</span>
+    <input id="incAmt" inputmode="decimal" placeholder="0" aria-label="Amount in euros"></div>
+  <button class="primary" id="saveInc">Save</button>
+  <button class="primary" style="background:none;color:var(--muted);border:1.5px solid var(--line)" id="clearInc">Use the statement or plan again</button>
 </div></div>
 
 <div class="sheet" id="savSheet" role="dialog" aria-modal="true" aria-label="Amount moved"><div class="card">
@@ -298,7 +340,7 @@ const firebaseConfig = {
 const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
 const PALETTE = ['#2B5A43','#C99A5E','#6E2A40','#4F7A5E','#B57A4E','#8C6A3E','#3F6E66','#9E5A5A','#7A8A5A','#5A3A4E','#D9B27C','#56705E'];
 const DEFAULTS = {
-  incomes:[{id:'g',name:'Gregor (salary + allowances)',amount:2790},{id:'gp',name:'Gregor travel reimbursements (avg)',amount:290},{id:'t',name:'Tanya',amount:3500}],
+  incomes:[{id:'g',name:'Gregor (salary + allowances)',amount:2790},{id:'gp',name:'Gregor travel reimbursements (avg)',amount:290},{id:'t',name:'Tanya',amount:3500,fixed:true}],
   usdRate:1.14,
   categories:[
     {id:'groc',name:'Groceries & drugstore',budget:600,color:PALETTE[0]},
@@ -356,6 +398,7 @@ function normalize(src){
   if(!s.categories.some(c=>c.id==='cash')){ const i=s.categories.findIndex(c=>c.fund); const cash=clone(DEFAULTS.categories.find(c=>c.id==='cash'));
     if(i>=0) s.categories.splice(i,0,cash); else s.categories.push(cash); }
   if(!s.categories.some(c=>c.id==='carfix')) s.categories.push(clone(DEFAULTS.categories.find(c=>c.id==='carfix')));
+  s.incomes.forEach(i=>{ if(i.fixed==null) i.fixed = i.id==='t'; });
   DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id)) s.savings.push(clone(d)); });
   ['v2','v3','v4','v5','emergStart','carfundStart'].forEach(k=>delete s[k]);
   return s;
@@ -363,7 +406,7 @@ function normalize(src){
 
 // ---------- state ----------
 let fb, auth, db, user, R, unsubs=[];
-let state = {settings:null, expenses:[], months:{}, payouts:[]};
+let state = {settings:null, expenses:[], months:{}, payouts:[], income:[]};
 let view = monthKey(new Date());
 let addCur='EUR', addCat=null, valPot=null, draft=null;
 
@@ -392,7 +435,7 @@ async function boot(){
   catch(e){ db = fb.getFirestore(app); }
   const H=['households','home'];
   R = { settings:fb.doc(db,...H,'meta','settings'), expenses:fb.collection(db,...H,'expenses'),
-        months:fb.collection(db,...H,'months'), payouts:fb.collection(db,...H,'payouts') };
+        months:fb.collection(db,...H,'months'), payouts:fb.collection(db,...H,'payouts'), income:fb.collection(db,...H,'income') };
   fb.onAuthStateChanged(auth, u=>{ if(u){ user=u; startSync(); } else { stopSync(); showLogin(''); } });
 }
 $('loginForm').onsubmit = async ev=>{
@@ -428,6 +471,7 @@ function startSync(){
   unsubs.push(fb.onSnapshot(R.months,o,snap=>{ const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); state.months=m;
     if(!snap.metadata.fromCache) monthsFromServer=true; track('m',snap); render(); lockClosedMonths(); },fail));
   unsubs.push(fb.onSnapshot(R.payouts,o,snap=>{ state.payouts=snap.docs.map(d=>({...d.data(),id:d.id})); track('p',snap); render(); },fail));
+  unsubs.push(fb.onSnapshot(R.income,o,snap=>{ state.income=snap.docs.map(d=>({...d.data(),id:d.id})); track('i',snap); render(); },fail));
 }
 function stopSync(){ unsubs.forEach(u=>u()); unsubs=[]; }
 
@@ -452,6 +496,18 @@ function balances(){
 const fixedActive = f => !f.until || view <= f.until;
 
 // ---------- render ----------
+// ---------- income per month ----------
+function monthIncome(k){
+  const parts = state.settings.incomes.map(inc=>{
+    if(inc.fixed) return {inc, amount:inc.amount, kind:'fixed'};
+    const ent = state.income.filter(x=>x.inc===inc.id && (x.date||'').slice(0,7)===k);
+    const man = ent.filter(x=>x.manual);
+    const use = man.length ? man : ent;
+    return use.length ? {inc, amount:sum(use,x=>num(x.eur)), kind: man.length?'set':'actual'} : {inc, amount:inc.amount, kind:'planned'};
+  });
+  return {total:sum(parts,p=>p.amount), parts};
+}
+
 // ---------- running budget balance ----------
 // Each closed month adds (envelope budget − spent). A month's budget is locked
 // into its month document once the month is over, so later budget changes
@@ -484,7 +540,7 @@ function render(){
   const s=state.settings; if(!s) return;
   if(view < minMonth()) view = minMonth();
   $('monthLabel').textContent = monthName(view);
-  setTimeout(envRender,0);
+  setTimeout(()=>{ envRender(); statRender(); },0);
   $('prev').disabled = view <= minMonth();
   const mo = state.months[view] || {}; const sd=mo.savingsDone||{}, fd=mo.fixedDone||{};
   const exM = state.expenses.filter(e=>(e.date||'').slice(0,7)===view);
@@ -502,8 +558,9 @@ function render(){
   const bal = balanceInfo();
   if(bal.rows.length) sub += `<br>Budget balance from earlier months: <b style="color:${bal.carried<0?'var(--red)':'var(--sea)'}">${signed(bal.carried)}</b>`;
   const stack = envCats.map((c,i)=>`<span style="width:${budget?Math.min(spentBy[c.id]||0,c.budget)/budget*100:0}%;background:${PALETTE[i%PALETTE.length]}"></span>`).join('');
-  $('hero').innerHTML = `<div class="big ${left<0?'neg':''}">${eur(Math.abs(left)).replace('−','')}</div>
+  $('hero').innerHTML = `<div class="big ${left<0?'neg':''}" id="heroBig" role="button" tabindex="0" aria-label="Show spending charts">${eur(Math.abs(left)).replace('−','')}</div>
     <div class="sub">${left<0?'over the spending budget':'left to spend this month'}</div>
+    <div class="tapcharts">Tap the number for charts</div>
     <div class="stack" aria-hidden="true">${stack}</div><div class="sub" style="margin-top:10px">${sub}</div>`;
 
   $('envelopes').innerHTML = envCats.map(c=>{
@@ -555,8 +612,11 @@ function render(){
       : `<div class="rowhead"><span>${monthName(curK)} (in progress)</span><span>${eur(curLeft)} left so far</span></div>
          <div class="note" style="padding-bottom:10px">The balance starts adding up once ${monthName(curK)} is over. Whatever you don't spend, or overspend, carries into the total.</div>`;
   }
-  const inc=sum(s.incomes,i=>i.amount), fixT=sum(fx,f=>f.amount), savT=sum(s.savings,v=>v.amount), buf=inc-fixT-savT-budget;
-  $('plan').innerHTML = `<div class="rowhead"><span>Income</span><span>${eur(inc)}</span></div>
+  const mi=monthIncome(view), inc=mi.total, fixT=sum(fx,f=>f.amount), savT=sum(s.savings,v=>v.amount), buf=inc-fixT-savT-budget;
+  const KIND={fixed:'fixed',actual:'from statement',set:'entered',planned:'planned'};
+  $('plan').innerHTML = `<div class="rowhead"><span><b>Income</b></span><span><b>${eur(inc)}</b></span></div>
+    ${mi.parts.map(p=>`<div class="rowhead" style="font-size:14px;color:var(--muted);padding:4px 0 4px 12px"><span>${esc(p.inc.name)}, ${KIND[p.kind]}
+      ${p.inc.fixed?'':`<button class="rm" style="color:var(--sea);margin-left:4px" data-incset="${p.inc.id}">Set</button>`}</span><span>${eur(p.amount)}</span></div>`).join('')}
     <div class="rowhead"><span>Fixed costs</span><span>−${eur(fixT)}</span></div>
     <div class="rowhead"><span>Savings</span><span>−${eur(savT)}</span></div>
     <div class="rowhead"><span>Spending envelopes</span><span>−${eur(budget)}</span></div>
@@ -565,12 +625,29 @@ function render(){
   const catName = id => (s.categories.find(c=>c.id===id)||{name:'Other'}).name;
   const ex=[...exM].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0));
   $('expMeta').textContent = ex.length ? `${ex.length}, ${eur(sum(ex,e=>num(e.eur)))}` : '';
-  $('expenses').hidden = !expOpen;
+  $('expWrap').hidden = !expOpen;
   $('expToggle').setAttribute('aria-expanded', String(expOpen));
-  $('expenses').innerHTML = ex.length ? ex.map(e=>`<div class="row"><div class="rowhead"><span class="name">${esc(e.note||catName(e.cat))}</span><span class="amt"><b>${eur(e.eur)}</b></span></div>
+  const q = searchTokens($('expSearch').value), allM = $('expAllMonths').checked;
+  let list = ex;
+  if(q.length){
+    const pool = allM ? [...state.expenses].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0)) : ex;
+    list = pool.filter(e=>{ const h=haystack(e,catName(e.cat)); return q.every(t=>h.includes(t)); });
+    $('expCount').textContent = list.length ? `${list.length} found, ${eur(sum(list,e=>num(e.eur)))}${allM?' across all months':' in '+monthName(view)}` : '';
+  } else $('expCount').textContent='';
+  $('expenses').innerHTML = list.length ? list.map(e=>`<div class="row"><div class="rowhead"><span class="name">${esc(e.note||catName(e.cat))}</span><span class="amt"><b>${eur(e.eur)}</b></span></div>
     <div class="rowhead"><span class="meta">${esc(catName(e.cat))}, ${shortDate(e.date)}${e.cur==='USD'?', $'+num(e.orig).toFixed(2):''}${e.by?', '+esc(e.by):''}</span>
     <button class="rm" data-rm="${esc(e.id)}">Remove</button></div></div>`).join('')
-    : `<div class="empty">No expenses logged for ${monthName(view)} yet. Tap Add expense to log the first one.</div>`;
+    : (q.length ? `<div class="empty">Nothing matches "${esc($('expSearch').value.trim())}"${allM?'':' in '+monthName(view)}.${allM?'':' Tick "All months" to search everything.'}</div>`
+       : `<div class="empty">No expenses logged for ${monthName(view)} yet. Tap Add expense to log the first one.</div>`);
+}
+// search helpers: every word you type must appear somewhere in the expense
+const fold = str => String(str||'').replace(/[Đđ]/g,'d').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const searchTokens = q => fold(q).split(/\s+/).filter(Boolean);
+function haystack(e,cat){
+  const [y,m,d]=(e.date||'').split('-'), dt=new Date((e.date||'')+'T12:00');
+  const mon=isNaN(dt)?'':dt.toLocaleDateString('en-GB',{month:'long'});
+  return fold([e.note,cat,e.by,e.date,`${+d}.${+m}.`,`${d}.${m}.${y}`,`${+d} ${mon}`,mon,
+    num(e.eur).toFixed(2),num(e.eur).toFixed(2).replace('.',','),Math.round(num(e.eur)),e.cur==='USD'?num(e.orig).toFixed(2):''].join(' | '));
 }
 
 // ---------- events ----------
@@ -603,6 +680,10 @@ document.addEventListener('click',e=>{
     savEdit=sv.id; $('savTitle').textContent=sv.name;
     $('savNote').textContent=`How much did you move in ${monthName(view)}? Planned is ${eur(sv.amount)}. If you moved money more than once, enter the total.`;
     $('savAmt').value = cur!=null ? moveAmt(cur) : ''; $('savSheet').classList.add('open'); setTimeout(()=>$('savAmt').focus(),150); return; }
+  if(t.dataset.incset){ const inc=state.settings.incomes.find(x=>x.id===t.dataset.incset), p=monthIncome(view).parts.find(x=>x.inc.id===inc.id);
+    incEdit=inc.id; $('incTitle').textContent=inc.name;
+    $('incNote').textContent=`What actually came in for ${monthName(view)}? This replaces the ${p.kind==='actual'?'amount from the statement':'planned '+eur(inc.amount)} for this month.`;
+    $('incAmt').value = p.kind==='planned' ? '' : Math.round(p.amount*100)/100; $('incSheet').classList.add('open'); setTimeout(()=>$('incAmt').focus(),150); return; }
   if(t.dataset.fix){ const id=t.dataset.fix, cur=!!((state.months[view]||{}).fixedDone||{})[id];
     w(fb.setDoc(fb.doc(R.months,view),{fixedDone:{[id]: cur ? fb.deleteField() : true}},{merge:true})); }
   if(t.dataset.rm){
@@ -652,6 +733,9 @@ function settingsForm(){
   const envs = s.categories.map((c,i)=>({c,i})).filter(x=>!x.c.fund && !x.c.archived);
   $('setForm').innerHTML = `
     <div class="sec">Monthly income (€)</div><div class="grid">${s.incomes.map((x,i)=>row(x.name,'inc:'+i,x.amount)).join('')}</div>
+    ${s.incomes.map((x,i)=>`<label style="display:flex;gap:10px;align-items:center;font-size:14px;color:var(--ink);margin:8px 0 0">
+      <input type="checkbox" data-incfix="${i}" ${x.fixed?'checked':''} style="width:20px;height:20px"> ${esc(x.name)} is always the same</label>`).join('')}
+    <div class="note" style="margin-top:6px">Unticked incomes are read from your statements (or entered with "Set" in Monthly plan). The amount above is used until then.</div>
     <div class="sec">Spending envelopes (€ a month)</div>
     ${envs.map(({c,i})=>`<div style="display:grid;grid-template-columns:1fr 90px 44px;gap:8px;align-items:center;margin-bottom:8px">
         <input class="field" data-name="${i}" value="${esc(c.name)}" aria-label="Envelope name">
@@ -681,6 +765,7 @@ function readForm(){
     if(p[0]==='pot') s.pots[p[1]][p[2]]=v;
     if(p[0]==='o') s[p[1]] = p[1]==='usdRate' ? (v||1.14) : v;
   });
+  document.querySelectorAll('#setForm [data-incfix]').forEach(cb=>{ s.incomes[+cb.dataset.incfix].fixed=cb.checked; });
   document.querySelectorAll('#setForm [data-month]').forEach(inp=>{ if(/^\d{4}-\d{2}$/.test(inp.value)) s[inp.dataset.month]=inp.value; });
 }
 $('openSettings').onclick=()=>{ if(!state.settings) return; draft=clone(state.settings); settingsForm(); $('setSheet').classList.add('open'); };
@@ -700,7 +785,7 @@ async function shareFile(file){
   const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=file.name; document.body.appendChild(a); a.click(); a.remove();
 }
 const backupObj = () => ({app:'household-budget',version:3,exportedAt:new Date().toISOString(),
-  settings:state.settings, expenses:state.expenses, months:state.months, payouts:state.payouts});
+  settings:state.settings, expenses:state.expenses, months:state.months, payouts:state.payouts, income:state.income});
 $('openBackup').onclick=()=>{ if(!state.settings) return;
   $('backInfo').textContent=`${state.expenses.length} expenses and ${state.payouts.length} payouts in the app. Everything syncs between your phones; the backup file is an extra copy.`;
   $('backMsg').textContent=''; $('impText').value=''; $('impFile').value=''; impArmed=false; $('doImport').textContent='Import';
@@ -723,7 +808,9 @@ function exportRows(){
   });
   const mom=state.payouts.map(p=>({Date:p.date,'Amount USD':p.usd}));
   let run=0; const balance=balanceInfo().rows.map(r=>{ run+=r.diff; return {Month:r.k,'Budget EUR':r.budget,'Spent EUR':Math.round(r.spent*100)/100,'Under (+) / over (−) EUR':Math.round(r.diff*100)/100,'Running balance EUR':Math.round(run*100)/100}; });
-  return {expenses,summary,savings,mom,balance};
+  const incName=id=>(s.incomes.find(i=>i.id===id)||{name:id}).name;
+  const income=[...state.income].sort((a,b)=>a.date.localeCompare(b.date)).map(x=>({Date:x.date,Month:x.date.slice(0,7),Income:incName(x.inc),'Amount EUR':num(x.eur),Source:x.manual?'Entered by hand':'Statement',Note:x.note||''}));
+  return {expenses,summary,savings,mom,balance,income};
 }
 function loadXlsx(){ return new Promise((ok,no)=>{ if(window.XLSX) return ok();
   const sc=document.createElement('script'); sc.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload=ok; sc.onerror=no; document.head.appendChild(sc); }); }
@@ -736,6 +823,7 @@ $('exportXlsx').onclick=async()=>{
   add(r.summary,'Budget vs spent',['Month','Category','Budget EUR','Spent EUR','Left EUR']);
   add(r.savings,'Savings moved',['Month','Item','Amount EUR']);
   add(r.mom,'Mom payouts',['Date','Amount USD']);
+  add(r.income,'Income',['Date','Month','Income','Amount EUR','Source','Note']);
   add(r.balance,'Budget balance',['Month','Budget EUR','Spent EUR','Under (+) / over (−) EUR','Running balance EUR']);
   await shareFile(new File([XLSX.write(wb,{bookType:'xlsx',type:'array'})],'budget-'+today()+'.xlsx',{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
   $('backMsg').textContent='Excel file ready.';
@@ -771,6 +859,8 @@ $('doImport').onclick=async()=>{
     if(m.savingsDone&&Object.keys(m.savingsDone).length) data.savingsDone=m.savingsDone;
     if(Object.keys(data).length) ops.push(b=>b.set(fb.doc(R.months,k),data,{merge:true})); });
   newP.forEach(p=>ops.push(b=>b.set(fb.doc(R.payouts,String(p.id||newId('p'))),{date:p.date,usd:num(p.usd)})));
+  const haveI=new Set(state.income.map(x=>x.id));
+  (Array.isArray(d.income)?d.income:[]).filter(x=>x && x.id && !haveI.has(String(x.id))).forEach(x=>{ const {id,...rest}=x; ops.push(b=>b.set(fb.doc(R.income,String(id)),rest)); });
   if($('impSettings').checked && d.settings) ops.push(b=>b.set(R.settings,normalize(d.settings)));
   try{ for(let i=0;i<ops.length;i+=400){ const b=fb.writeBatch(db); ops.slice(i,i+400).forEach(fn=>fn(b)); await b.commit(); }
        msg.textContent=`Imported ${newE.length} expenses and ${newP.length} payouts.`; }
@@ -880,14 +970,15 @@ function parseTable(rows, srcHint){
   const H = r => r.map(c=>norm(c));
   let hi=-1;
   for(let i=0;i<Math.min(rows.length,20);i++){ const h=H(rows[i]).join('|');
-    if(/DATE|DATUM|IZDANO/.test(h) && /AMOUNT|ZNESEK|IZNOS|BREME|DEBIT/.test(h)){ hi=i; break; } }
+    if(/DATE|DATUM|IZDANO/.test(h) && /AMOUNT|ZNESEK|IZNOS|BREME|DEBIT|ISPLATA/.test(h)){ hi=i; break; } }
   if(hi<0) return {error:'Could not find the date and amount columns in this file.'};
   const h=H(rows[hi]), col=re=>h.findIndex(x=>re.test(x));
   const isChase = h.includes('TRANSACTION DATE') && h.includes('POST DATE');
-  const src = isChase ? 'chase' : (srcHint||'other');
+  const isZaba = h.includes('ISPLATA') && h.includes('UPLATA');
+  const src = isChase ? 'chase' : isZaba ? 'zaba' : (srcHint||'other');
   const ci={ date: (()=>{ const a=col(/^TRANSACTION DATE$|^DATUM TRANSAKCIJE$|^IZDANO$/); return a>=0?a:col(/DATE|DATUM/); })(),
     desc: col(/DESCRIPTION|OPIS|NAMEN|MERCHANT|PREJEMNIK|NAZIV|PARTNER/), amount: col(/^AMOUNT$|ZNESEK|IZNOS/),
-    debit: col(/BREME|^DEBIT|IZPLACIL/), credit: col(/DOBRO|^CREDIT|PRILIV/), cur: col(/VALUTA|CURRENCY/),
+    debit: col(/BREME|^DEBIT|IZPLACIL|^ISPLATA/), credit: col(/DOBRO|^CREDIT|PRILIV|^UPLATA/), cur: col(/VALUTA|CURRENCY/),
     cat: col(/^CATEGORY$/), type: col(/^TYPE$|VRSTA/) };
   const out=[];
   for(const r of rows.slice(hi+1)){
@@ -906,12 +997,24 @@ function classify(tx, rules){
   const D=norm(tx.desc), amt=tx.amount;
   const sug=(value,need,reason)=>({value,need:!!need,reason:reason||''});
   if(tx.isPayment) return sug('s',0,'Card payment');
+  if(amt<0 && tx.src==='intesa'){
+    if(/\bPLACE\b|\bPLACA\b/.test(D)) return sug('i:g',0,'Salary');
+    if(/\bSTROSKI\b/.test(D)) return sug('i:gp',0,'Travel reimbursement');
+  }
   if(amt<0 && tx.src!=='chase') return sug('s',0,'Money in');
   if(amt<0) return sug('c:'+(rules[mkey(tx.desc)]||builtinCat(tx.desc)||CHASE_CAT[tx.chaseCat]||'shop'),0,'Refund');
   if(tx.src==='chase' && /\bKEKS PAY\b/.test(D)){
     if(amt>=560 && amt<=600) return sug('t:daycare',1,'KEKS Pay, looks like daycare');
     if(amt>=150) return sug('s',1,'Big KEKS Pay, tax or another bill?');
     return sug('c:bills',0,'KEKS Pay bill');
+  }
+  if(tx.src==='zaba'){
+    if(/PODIZANJE GOTOVOG/.test(D)) return amt<=150 ? sug('c:cash',0,'Cash withdrawal') : sug('s',0,'Cash for paying Chase');
+    if(/NAKNADA ZA VODENJE/.test(D)) return sug('t:misc',0,'Bank fee');
+    if(/POREZ NA DOHODAK|DOPRINOS|DRZAVNI PRORACUN|ZAVOD ZA ZDRAVSTVENO|PRIREZ/.test(D)) return sug('s',0,"Tanya's taxes");
+    if(/INOZEMSTVO/.test(D) && /GREGOR/.test(D)) return sug('s',0,'Transfer to Gregor');
+    if(/SNJEZANA/.test(D)) return sug('t:mort',0,'Mortgage (to Snježana)');
+    if(/KREDITNI TRANSFER/.test(D) && !builtinCat(tx.desc)) return sug('c:other',1,'Payment to a person');
   }
   if(tx.src==='intesa'){
     if(/SKUPNA ACTIVA/.test(D)) return sug('s',0,'Mastercard bill (its purchases are imported separately)');
@@ -957,6 +1060,9 @@ async function readStatement(file){
     const text=await pdfText(file), kind=detectPdf(text);
     if(kind==='chase') return {name:file.name, src:'chase', items:parseChasePdf(text)};
     if(kind==='intesa'||kind==='mc') return {name:file.name, src:kind, items:parseIntesaPdf(text,kind)};
+    const letters=(text.match(/[A-Za-zČčŠšŽžĐđĆć]/g)||[]).length;
+    if(letters < text.replace(/\s/g,'').length*0.3)
+      return {name:file.name, error:'This PDF has no readable text inside (Zagrebačka banka PDFs are built this way). In e-zaba, download the statement as Excel or CSV instead and import that.'};
     return {name:file.name, error:'This PDF does not look like a Chase, main account or Mastercard statement.'};
   }
   let rows;
@@ -965,16 +1071,17 @@ async function readStatement(file){
   const r=parseTable(rows, /master|kartic/i.test(name)?'mc':'intesa');
   return r.error ? {name:file.name, error:r.error} : {name:file.name, src:r.src, items:r.items};
 }
-const SRC_NAME={chase:'Chase',intesa:'Main account',mc:'Mastercard',other:'Other'};
+const SRC_NAME={chase:'Chase',intesa:'Main account',mc:'Mastercard',zaba:'Zagrebačka banka',other:'Other'};
 let st={items:[], files:[]};
 function stOptions(){
   const s=state.settings;
   return s.categories.filter(c=>!c.archived).map(c=>`<option value="c:${c.id}">${esc(c.name)}</option>`).join('')
     + s.fixed.map(f=>`<option value="t:${f.id}">Mark paid: ${esc(f.name)}</option>`).join('')
+    + s.incomes.filter(i=>!i.fixed).map(i=>`<option value="i:${i.id}">Income: ${esc(i.name)}</option>`).join('')
     + `<option value="s">Skip, not an expense</option>`;
 }
 function stRender(){
-  const from=$('stFrom').value||'0000', have=new Set(state.expenses.map(e=>e.id)), rate=state.settings.usdRate||1.14;
+  const from=$('stFrom').value||'0000', have=haveIds(), rate=state.settings.usdRate||1.14;
   const vis=st.items.filter(t=>t.date>=from);
   const dup=vis.filter(t=>have.has(t.id)), fresh=vis.filter(t=>!have.has(t.id));
   const groups=[['Needs your decision',fresh.filter(t=>t.need)],['Will be added',fresh.filter(t=>!t.need && t.value!=='s')],['Skipped',fresh.filter(t=>!t.need && t.value==='s')]];
@@ -987,9 +1094,14 @@ function stRender(){
     + groups.map(([title,list])=>list.length?`<div class="sec">${title} (${list.length})</div>${list.map(row).join('')}`:'').join('')
     + (dup.length?`<div class="note" style="margin-top:12px">${dup.length} already in the app, skipped.</div>`:'')
     + (st.items.length-vis.length>0?`<div class="note">${st.items.length-vis.length} older than the start date, not shown.</div>`:'');
-  const adds=fresh.filter(t=>t.value.startsWith('c:')), ticks=fresh.filter(t=>t.value.startsWith('t:'));
-  $('stApply').disabled = !(adds.length||ticks.length);
-  $('stApply').textContent = adds.length||ticks.length ? `Add ${adds.length} expenses${ticks.length?', mark '+ticks.length+' paid':''}` : 'Nothing new to add';
+  stButton(fresh);
+}
+function haveIds(){ return new Set([...state.expenses.map(x=>x.id), ...state.income.map(x=>x.id)]); }
+function stButton(fresh){
+  const n=p=>fresh.filter(t=>t.value.startsWith(p)).length, a=n('c:'), t=n('t:'), i=n('i:');
+  const parts=[a?`add ${a} expenses`:'', i?`${i} income`:'', t?`mark ${t} paid`:''].filter(Boolean);
+  $('stApply').disabled=!parts.length;
+  $('stApply').textContent = parts.length ? parts.join(', ').replace(/^./,c=>c.toUpperCase()) : 'Nothing new to add';
 }
 $('openStatement').onclick=()=>{ if(!state.settings) return;
   st={items:[],files:[]}; $('stFile').value=''; $('stBody').innerHTML=''; $('stMsg').textContent='';
@@ -1002,6 +1114,10 @@ $('stFile').onchange=async()=>{
     try{ const r=await readStatement(f);
       if(r.error){ st.files.push({name:f.name,error:r.error}); continue; }
       const items=withIds(r.items.filter(t=>t.date && isFinite(t.amount) && t.amount!==0)).map(t=>({...t,...classify(t,rules),mk:mkey(t.desc)}));
+      // salary sometimes arrives as a bare "Plačilni nalog": big incoming on the main account, plus any small one the same day
+      const bare=t=>t.src==='intesa' && t.amount<0 && t.value==='s' && norm(t.desc)==='PLACILNI NALOG';
+      const payDays=new Set(items.filter(t=>bare(t) && -t.amount>=1500).map(t=>t.date));
+      items.forEach(t=>{ if(bare(t) && (-t.amount>=1500 || payDays.has(t.date))){ t.value='i:g'; t.need=true; t.reason='Looks like salary'; } });
       items.forEach(t=>t.auto=t.value);
       st.items.push(...items); st.files.push({name:f.name,src:r.src,count:items.length});
     }catch(e){ st.files.push({name:f.name,error:'Could not read this file. If it is a PDF, check your internet connection.'}); }
@@ -1011,12 +1127,10 @@ $('stFile').onchange=async()=>{
 $('stFrom').onchange=()=>{ if(st.items.length) stRender(); };
 $('stBody').onchange=e=>{ const sel=e.target.closest('.stsel'); if(!sel) return;
   const t=st.items.find(x=>x.id===sel.dataset.st); if(t){ t.value=sel.value; }
-  const have=new Set(state.expenses.map(x=>x.id)), fresh=st.items.filter(x=>x.date>=($('stFrom').value||'0000') && !have.has(x.id));
-  const adds=fresh.filter(x=>x.value.startsWith('c:')), ticks=fresh.filter(x=>x.value.startsWith('t:'));
-  $('stApply').disabled=!(adds.length||ticks.length);
-  $('stApply').textContent = adds.length||ticks.length ? `Add ${adds.length} expenses${ticks.length?', mark '+ticks.length+' paid':''}` : 'Nothing new to add'; };
+  const have=haveIds(), fresh=st.items.filter(x=>x.date>=($('stFrom').value||'0000') && !have.has(x.id));
+  stButton(fresh); };
 $('stApply').onclick=async()=>{
-  const have=new Set(state.expenses.map(x=>x.id)), rate=state.settings.usdRate||1.14;
+  const have=haveIds(), rate=state.settings.usdRate||1.14;
   const fresh=st.items.filter(x=>x.date>=($('stFrom').value||'0000') && !have.has(x.id));
   const ops=[], ticks={}, learn={};
   fresh.forEach(t=>{
@@ -1025,12 +1139,15 @@ $('stApply').onclick=async()=>{
         eur:Math.round((t.cur==='USD'?t.amount/rate:t.amount)*100)/100,by:'statement',createdAt:Date.now()}));
       if($('stRemember').checked && t.value!==t.auto && t.mk && !/KEKS PAY/.test(norm(t.desc))) learn[t.mk]=cat;
     } else if(t.value.startsWith('t:')){ const k=t.date.slice(0,7); (ticks[k]=ticks[k]||{})[t.value.slice(2)]=true; }
+    else if(t.value.startsWith('i:')){
+      ops.push(b=>b.set(fb.doc(R.income,t.id),{inc:t.value.slice(2),date:t.date,eur:Math.round(Math.abs(t.cur==='USD'?t.amount/rate:t.amount)*100)/100,
+        note:t.desc.trim(),by:'statement',createdAt:Date.now()})); }
   });
   Object.entries(ticks).forEach(([k,f])=>ops.push(b=>b.set(fb.doc(R.months,k),{fixedDone:f},{merge:true})));
   if(Object.keys(learn).length) ops.push(b=>b.set(R.settings,{rules:learn},{merge:true}));
   $('stApply').disabled=true; $('stMsg').textContent='Adding…';
   try{ for(let i=0;i<ops.length;i+=400){ const b=fb.writeBatch(db); ops.slice(i,i+400).forEach(fn=>fn(b)); await b.commit(); }
-    $('stMsg').textContent=`Done. Added ${fresh.filter(t=>t.value.startsWith('c:')).length} expenses.`+(Object.keys(learn).length?` Remembered ${Object.keys(learn).length} shops for next time.`:'');
+    $('stMsg').textContent=`Done. Added ${fresh.filter(t=>t.value.startsWith('c:')).length} expenses and ${fresh.filter(t=>t.value.startsWith('i:')).length} income payments.`+(Object.keys(learn).length?` Remembered ${Object.keys(learn).length} shops for next time.`:'');
     setTimeout(()=>$('stSheet').classList.remove('open'),1200);
   }catch(e){ fail(e); $('stMsg').textContent='Could not add them. Check your connection and try again; nothing will be doubled.'; $('stApply').disabled=false; }
 };
@@ -1091,6 +1208,90 @@ function migrateCash(){
 // expenses list: always starts hidden when the app opens
 let expOpen=false;
 $('expToggle').onclick=()=>{ expOpen=!expOpen; render(); };
+
+// ---------- charts ----------
+let stView=null;
+function catColor(id){
+  const s=state.settings, envCats=s.categories.filter(c=>!c.fund && !c.archived), i=envCats.findIndex(c=>c.id===id);
+  return i>=0 ? PALETTE[i%PALETTE.length] : (id==='carfix' ? '#8F8A78' : '#9A9A9A');
+}
+function monthTotals(k){
+  const s=state.settings, fundIds=new Set(s.categories.filter(c=>c.fund).map(c=>c.id));
+  const ex=state.expenses.filter(e=>(e.date||'').slice(0,7)===k), by={};
+  ex.forEach(e=>by[e.cat]=(by[e.cat]||0)+num(e.eur));
+  return { by,
+    spent: sum(ex.filter(e=>!fundIds.has(e.cat)),e=>num(e.eur)),
+    fund: sum(ex.filter(e=>fundIds.has(e.cat)),e=>num(e.eur)),
+    fixed: sum(s.fixed.filter(f=>!f.until || k<=f.until),f=>f.amount),
+    saved: sum(Object.values((state.months[k]||{}).savingsDone||{}),moveAmt),
+    income: monthIncome(k).total, budget: monthBudget(k) };
+}
+function donutSvg(slices,total){
+  const R=70, C=2*Math.PI*R; let off=0;
+  const segs = total>0 ? slices.map(x=>{ const len=x.v/total*C;
+    const el=`<circle r="${R}" cx="90" cy="90" fill="none" stroke="${x.color}" stroke-width="26" stroke-dasharray="${Math.max(len-1.5,0.5)} ${C}" stroke-dashoffset="${-off}"><title>${esc(x.name)}</title></circle>`;
+    off+=len; return el; }).join('') : `<circle r="${R}" cx="90" cy="90" fill="none" stroke="var(--track)" stroke-width="26"/>`;
+  return `<svg viewBox="0 0 180 180" width="190" height="190" role="img" aria-label="Spending by envelope">
+    <g transform="rotate(-90 90 90)">${segs}</g>
+    <text x="90" y="86" text-anchor="middle" style="fill:var(--ink);font-size:22px;font-weight:700;font-family:inherit">${eur(total)}</text>
+    <text x="90" y="106" text-anchor="middle" style="fill:var(--muted);font-size:11px;font-family:inherit">spent</text></svg>`;
+}
+const SERIES=[{k:'income',name:'Income',color:'#D9B27C'},{k:'spent',name:'Spending',color:'#2B5A43'},{k:'fixed',name:'Fixed costs',color:'#6E2A40'},{k:'saved',name:'Saved',color:'#7FB08F'}];
+function statRender(){
+  if(!$('statSheet').classList.contains('open') || !state.settings) return;
+  const s=state.settings, min=minMonth(), cur=monthKey(new Date());
+  if(stView<min) stView=min;
+  $('stMonth').textContent=monthName(stView);
+  $('stPrev').disabled = stView<=min;
+  $('stNext').disabled = stView>=cur;
+  const t=monthTotals(stView);
+  const slices=Object.entries(t.by).filter(([,v])=>v>0).map(([id,v])=>{ const c=s.categories.find(x=>x.id===id)||{name:'Other'};
+    return {id,v,name:c.name+(c.fund?' (from fund)':''),color:catColor(id)}; }).sort((a,b)=>b.v-a.v);
+  const total=sum(slices,x=>x.v);
+  $('stDonut').innerHTML=donutSvg(slices,total);
+  $('stLegend').innerHTML = slices.length ? slices.map(x=>`<div class="rowhead"><span><span class="sw" style="background:${x.color}"></span>${esc(x.name)}</span>
+      <span class="amt"><b>${eur(x.v)}</b> ${Math.round(x.v/total*100)}%</span></div>`).join('')
+      + `<div class="note" style="margin-top:6px">${eur(t.spent)} of ${eur(t.budget)} spending budget${t.fund?', plus '+eur(t.fund)+' from the car fund':''}.</div>`
+    : `<div class="empty" style="text-align:center">No expenses in ${monthName(stView)}.</div>`;
+  // last 6 months ending at the viewed month, never before the start month
+  const months=[]; let k=stView; while(months.length<6 && k>=min){ months.unshift(k); k=shiftMonth(k,-1); }
+  const data=months.map(m=>({m,...monthTotals(m)}));
+  const max=Math.max(1,...data.flatMap(d=>SERIES.map(x=>d[x.k])));
+  const W=340,H=170,top=8,bottom=22,gw=W/months.length,bw=Math.min(12,(gw-12)/4);
+  const bars=data.map((d,i)=>{ const x0=i*gw+(gw-bw*4-6)/2;
+    return `<g data-sm="${d.m}" style="cursor:pointer"><rect x="${i*gw}" y="0" width="${gw}" height="${H}" fill="transparent"/>`
+      + SERIES.map((sr,j)=>{ const h=(d[sr.k]/max)*(H-top-bottom); return `<rect x="${x0+j*(bw+2)}" y="${H-bottom-h}" width="${bw}" height="${Math.max(h,0.5)}" rx="2" fill="${sr.color}"/>`; }).join('')
+      + `<text x="${i*gw+gw/2}" y="${H-6}" text-anchor="middle" class="${d.m===stView?'sel':''}">${new Date(d.m+'-01T12:00').toLocaleDateString('en-GB',{month:'short'})}</text></g>`; }).join('');
+  $('stKey').innerHTML=SERIES.map(x=>`<span><span class="sw" style="background:${x.color}"></span>${x.name}</span>`).join('');
+  $('stBars').innerHTML=`<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Income, spending, fixed costs and savings per month">
+    <line x1="0" x2="${W}" y1="${H-bottom}" y2="${H-bottom}" stroke="var(--line)"/>${bars}</svg>`
+    + (months.length<2 ? `<div class="note">More months appear here as the budget runs. It starts in ${monthName(min)}.</div>`:'');
+  const left=t.income-t.spent-t.fixed-t.saved-t.fund;
+  $('stDetail').innerHTML=`<div class="rowhead"><span>Income</span><span>${eur(t.income)}</span></div>
+    <div class="rowhead"><span>Spending</span><span>−${eur(t.spent)}</span></div>
+    ${t.fund?`<div class="rowhead"><span>Car upkeep (from fund)</span><span>−${eur(t.fund)}</span></div>`:''}
+    <div class="rowhead"><span>Fixed costs</span><span>−${eur(t.fixed)}</span></div>
+    <div class="rowhead"><span>Saved</span><span>−${eur(t.saved)}</span></div>
+    <div class="rowhead total"><span>Left over in ${monthName(stView)}</span><span style="color:${left<0?'var(--red)':'inherit'}">${eur(left)}</span></div>`;
+}
+function openStats(){ if(!state.settings) return; stView=view; $('statSheet').classList.add('open'); statRender(); }
+$('hero').addEventListener('click',e=>{ if(e.target.closest('#heroBig')) openStats(); });
+$('hero').addEventListener('keydown',e=>{ if(e.target.closest('#heroBig') && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); openStats(); } });
+$('stPrev').onclick=()=>{ stView=shiftMonth(stView,-1); statRender(); };
+$('stNext').onclick=()=>{ stView=shiftMonth(stView,1); statRender(); };
+$('stBars').addEventListener('click',e=>{ const g=e.target.closest('[data-sm]'); if(g){ stView=g.dataset.sm; statRender(); } });
+
+// search box
+$('expSearch').addEventListener('input',()=>render());
+$('expAllMonths').addEventListener('change',()=>render());
+
+// ---------- manual income for a month ----------
+let incEdit=null;
+$('saveInc').onclick=()=>{ const v=num($('incAmt').value), id=`man-${incEdit}-${view}`;
+  if(v>0) w(fb.setDoc(fb.doc(R.income,id),{inc:incEdit,date:view+'-15',eur:Math.round(v*100)/100,note:'Entered by hand',manual:true,by:who(),createdAt:Date.now()}));
+  else w(fb.deleteDoc(fb.doc(R.income,id)));
+  $('incSheet').classList.remove('open'); };
+$('clearInc').onclick=()=>{ w(fb.deleteDoc(fb.doc(R.income,`man-${incEdit}-${view}`))); $('incSheet').classList.remove('open'); };
 
 boot();
 </script>
