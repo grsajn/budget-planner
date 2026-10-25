@@ -211,7 +211,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
     <button class="tick" style="min-width:150px" id="openStatement">Import statement</button>
   </div>
   <div class="status" id="status"></div>
-  <div class="status" style="opacity:.6">App version 2026-10-26 (yearly pot)</div>
+  <div class="status" style="opacity:.6">App version 2026-10-26 (joined pot)</div>
 </div>
 <button class="fab" id="openAdd">Add expense</button>
 </div>
@@ -453,8 +453,17 @@ function normalize(src){
       s.categories.splice(b2>=0?b2:s.categories.length,0,{id:'yextra',name:'Unplanned yearly costs',budget:0,yearly:true,budgetYear:300,fund:'yearfund'}); }
     s.yearPotV=true;
   }
+  if(!s.joinPotV){
+    const car=s.categories.find(c=>c.id==='carfix'); if(car) car.fund='yearfund';
+    s.savings=s.savings.filter(v=>v.id!=='carfund');
+    const yp=s.savings.find(v=>v.id==='yearfund'); if(yp) yp.name='Car & yearly bills pot';
+    s.pots.yearfund=s.pots.yearfund||{start:0};
+    s.pots.yearfund.start=num(s.pots.yearfund.start)+num((s.pots.carfund||{}).start); s.pots.carfund={start:0};
+    s.potAlias=Object.assign({},s.potAlias,{carfund:'yearfund'});
+    s.joinPotV=true;
+  }
   if(!s.extra300V){ const x=s.categories.find(c=>c.id==='yextra'); if(x && num(x.budgetYear)===600) x.budgetYear=300; s.extra300V=true; }
-  DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id)) s.savings.push(clone(d)); });
+  DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id) && !(s.potAlias||{})[d.id]) s.savings.push(clone(d)); });
   ['v2','v3','v4','v5','emergStart','carfundStart'].forEach(k=>delete s[k]);
   return s;
 }
@@ -520,7 +529,7 @@ function startSync(){
   unsubs.push(fb.onSnapshot(R.settings,o,snap=>{
     if(!snap.exists()){ if(!snap.metadata.fromCache) w(fb.setDoc(R.settings, normalize(DEFAULTS))); return; }
     state.settings = normalize(snap.data()); track('s',snap); render(); migrateCash(); migrateYearlySubs();
-    if((!snap.data().bigFundV || !snap.data().yearlyV || !snap.data().yearPotV || !snap.data().extra300V) && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
+    if((!snap.data().bigFundV || !snap.data().yearlyV || !snap.data().yearPotV || !snap.data().extra300V || !snap.data().joinPotV) && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
   },fail));
   unsubs.push(fb.onSnapshot(R.expenses,o,snap=>{ state.expenses=snap.docs.map(d=>({...d.data(),id:d.id})); track('e',snap); render();
     if(!snap.metadata.fromCache){ expFromServer=true; migrateCash(); migrateYearlySubs(); } },fail));
@@ -549,7 +558,8 @@ function balances(){
   b.funds={};
   [...new Set(s.categories.filter(c=>c.fund).map(c=>c.fund))].forEach(f=>{
     const ids=new Set(s.categories.filter(c=>c.fund===f).map(c=>c.id));
-    b.funds[f] = num((P[f]||{}).start) + sum(moves(f),x=>x.amount) - sum(state.expenses.filter(e=>ids.has(e.cat)),e=>num(e.eur)); });
+    const aliases=Object.entries(s.potAlias||{}).filter(([,to])=>to===f).map(([from])=>from);
+    b.funds[f] = num((P[f]||{}).start) + sum([f,...aliases].flatMap(moves),x=>x.amount) - sum(state.expenses.filter(e=>ids.has(e.cat)),e=>num(e.eur)); });
   b.carfund = b.funds.carfund||0;
   const usdVal = id => num(P[id].value) + sum(moves(id).filter(x=>x.date>(P[id].valueDate||'')),x=>x.amount*rate);
   b.family = usdVal('family'); b.son = usdVal('son');
@@ -849,7 +859,7 @@ function settingsForm(){
     <div class="sec">Fixed costs (€ a month)</div><div class="grid">${s.fixed.map((x,i)=>row(x.name,'fix:'+i,x.amount)).join('')}</div>
     <div class="sec">Balances and goals</div><div class="grid">
       ${row('Euro savings starting balance (€)','pot:emerg:start',s.pots.emerg.start)}
-      ${s.categories.filter(c=>c.fund).map(c=>row(((s.savings.find(v=>v.id===c.fund)||{}).name||c.fund)+' starting balance (€)','pot:'+c.fund+':start',(s.pots[c.fund]||{}).start||0)).join('')}
+      ${[...new Set(s.categories.filter(c=>c.fund&&!c.archived).map(c=>c.fund))].map(f=>row(((s.savings.find(v=>v.id===f)||{}).name||f)+' starting balance (€)','pot:'+f+':start',(s.pots[f]||{}).start||0)).join('')}
       ${row('Euro savings goal (€)','o:emergGoal',s.emergGoal)}
       ${row('Mom payout total ($)','o:momTarget',s.momTarget)}
       ${row('Dollars per euro','o:usdRate',s.usdRate)}
