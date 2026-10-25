@@ -209,6 +209,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
     <button class="tick" style="min-width:150px" id="openStatement">Import statement</button>
   </div>
   <div class="status" id="status"></div>
+  <div class="status" style="opacity:.6">App version 2026-10-25 (income)</div>
 </div>
 <button class="fab" id="openAdd">Add expense</button>
 </div>
@@ -999,7 +1000,9 @@ function classify(tx, rules){
   if(tx.isPayment) return sug('s',0,'Card payment');
   if(amt<0 && tx.src==='intesa'){
     if(/\bPLACE\b|\bPLACA\b/.test(D)) return sug('i:g',0,'Salary');
-    if(/\bSTROSKI\b/.test(D)) return sug('i:gp',0,'Travel reimbursement');
+    if(/STROSK|POTN|REIMB/.test(D)) return sug('i:gp',0,'Travel reimbursement');
+    // any other money coming in: you decide (skip is pre-selected)
+    return sug('s',1,'Money in: income, or skip?');
   }
   if(amt<0 && tx.src!=='chase') return sug('s',0,'Money in');
   if(amt<0) return sug('c:'+(rules[mkey(tx.desc)]||builtinCat(tx.desc)||CHASE_CAT[tx.chaseCat]||'shop'),0,'Refund');
@@ -1117,7 +1120,9 @@ $('stFile').onchange=async()=>{
       // salary sometimes arrives as a bare "Plačilni nalog": big incoming on the main account, plus any small one the same day
       const bare=t=>t.src==='intesa' && t.amount<0 && t.value==='s' && norm(t.desc)==='PLACILNI NALOG';
       const payDays=new Set(items.filter(t=>bare(t) && -t.amount>=1500).map(t=>t.date));
-      items.forEach(t=>{ if(bare(t) && (-t.amount>=1500 || payDays.has(t.date))){ t.value='i:g'; t.need=true; t.reason='Looks like salary'; } });
+      items.forEach(t=>{ if(!bare(t)) return;
+        if(-t.amount>=1500 || payDays.has(t.date)){ t.value='i:g'; t.need=true; t.reason='Looks like salary'; }
+        else { t.value='i:gp'; t.need=true; t.reason='Looks like travel reimbursement'; } });
       items.forEach(t=>t.auto=t.value);
       st.items.push(...items); st.files.push({name:f.name,src:r.src,count:items.length});
     }catch(e){ st.files.push({name:f.name,error:'Could not read this file. If it is a PDF, check your internet connection.'}); }
