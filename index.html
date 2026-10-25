@@ -184,6 +184,8 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
   <section class="hero" id="hero"><div class="sub">Loading…</div></section>
   <h2>Spending envelopes</h2>
   <div class="panel" id="envelopes"></div>
+  <h2>Yearly envelopes</h2>
+  <div class="panel" id="yearly"></div>
   <h2>Savings</h2>
   <div class="panel" id="savings"></div>
   <h2>Fixed costs</h2>
@@ -209,7 +211,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
     <button class="tick" style="min-width:150px" id="openStatement">Import statement</button>
   </div>
   <div class="status" id="status"></div>
-  <div class="status" style="opacity:.6">App version 2026-10-26 (funds)</div>
+  <div class="status" style="opacity:.6">App version 2026-10-26 (yearly)</div>
 </div>
 <button class="fab" id="openAdd">Add expense</button>
 </div>
@@ -253,13 +255,30 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
 
 <div class="sheet" id="statSheet" role="dialog" aria-modal="true" aria-label="Spending charts"><div class="card">
   <div class="cardhead"><h3>Spending overview</h3><button class="iconbtn" data-close="statSheet" aria-label="Close">✕</button></div>
-  <div class="statnav"><button class="iconbtn" id="stPrev" aria-label="Previous month">‹</button><span class="m" id="stMonth"></span><button class="iconbtn" id="stNext" aria-label="Next month">›</button></div>
-  <div class="donutwrap" id="stDonut"></div>
-  <div class="legend" id="stLegend"></div>
-  <div class="sec" style="margin-top:22px">Month by month</div>
-  <div class="keyrow" id="stKey"></div>
-  <div id="stBars"></div>
-  <div class="panel plan" id="stDetail" style="margin-top:10px"></div>
+  <div class="seg" id="stSeg" style="margin-bottom:14px"><button data-mode="month" class="on" style="flex:1">Month</button><button data-mode="year" style="flex:1">Year</button></div>
+  <div id="stMonthView">
+    <div class="statnav"><button class="iconbtn" id="stPrev" aria-label="Previous month">‹</button><span class="m" id="stMonth"></span><button class="iconbtn" id="stNext" aria-label="Next month">›</button></div>
+    <div class="donutwrap" id="stDonut"></div>
+    <div class="legend" id="stLegend"></div>
+    <div class="sec" style="margin-top:22px">Month by month</div>
+    <div class="keyrow stKeyCopy"></div>
+    <div id="stBars"></div>
+    <div class="panel plan" id="stDetail" style="margin-top:10px"></div>
+  </div>
+  <div id="stYearView" hidden>
+    <div class="statnav"><button class="iconbtn" id="stYPrev" aria-label="Previous year">‹</button><span class="m" id="stYearLabel"></span><button class="iconbtn" id="stYNext" aria-label="Next year">›</button></div>
+    <div class="panel plan" id="stYearTotals"></div>
+    <div class="sec" style="margin-top:20px">Month by month</div>
+    <div class="keyrow" id="stKey"></div>
+    <div id="stYearBars"></div>
+    <div class="note">Tap a month to open it.</div>
+    <div class="sec" style="margin-top:20px">Yearly envelopes</div>
+    <div class="panel" id="stYearly"></div>
+    <div class="sec" style="margin-top:20px">Monthly envelopes over the year</div>
+    <div class="panel" id="stYearEnv"></div>
+    <div class="sec" style="margin-top:20px">Yearly and irregular payments</div>
+    <div class="panel" id="stYearPays"></div>
+  </div>
 </div></div>
 
 <div class="sheet" id="incSheet" role="dialog" aria-modal="true" aria-label="Income this month"><div class="card">
@@ -390,6 +409,8 @@ const num = v => { const n=parseFloat(String(v??'').replace(',','.')); return is
 const sum = (arr,f) => arr.reduce((a,x)=>a+(f?f(x):x),0);
 const newId = p => p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 
+const isYearly = c => !!(c && (c.yearly || c.fund));
+const isMonthly = c => !!c && !isYearly(c) && !c.archived;
 function normalize(src){
   const s = Object.assign(clone(DEFAULTS), clone(src||{}));
   if(!src || !src.pots){
@@ -407,6 +428,16 @@ function normalize(src){
     if(!s.savings.some(v=>v.id==='bigfund')){ const i=s.savings.findIndex(v=>v.id==='carfund');
       s.savings.splice(i>=0?i+1:s.savings.length,0,{id:'bigfund',name:'Big purchases fund',amount:was||300}); }
     s.bigFundV=true;
+  }
+  if(!s.yearlyV){
+    const sv=id=>num((s.savings.find(v=>v.id===id)||{}).amount);
+    const car=s.categories.find(c=>c.id==='carfix');
+    if(car){ car.yearly=true; car.name='Car (insurance, service, tyres)'; car.budgetYear=car.budgetYear||12*(sv('carfund')||290); }
+    const big=s.categories.find(c=>c.id==='big');
+    if(big){ big.yearly=true; big.name='Big purchases'; big.budgetYear=big.budgetYear||12*(sv('bigfund')||300); }
+    if(!s.categories.some(c=>c.id==='yearsubs')){ const i=s.categories.findIndex(c=>c.id==='carfix');
+      s.categories.splice(i>=0?i:s.categories.length,0,{id:'yearsubs',name:'Yearly subscriptions',budget:0,yearly:true,budgetYear:950}); }
+    s.yearlyV=true;
   }
   DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id)) s.savings.push(clone(d)); });
   ['v2','v3','v4','v5','emergStart','carfundStart'].forEach(k=>delete s[k]);
@@ -473,11 +504,11 @@ function startSync(){
   const o={includeMetadataChanges:true};
   unsubs.push(fb.onSnapshot(R.settings,o,snap=>{
     if(!snap.exists()){ if(!snap.metadata.fromCache) w(fb.setDoc(R.settings, normalize(DEFAULTS))); return; }
-    state.settings = normalize(snap.data()); track('s',snap); render(); migrateCash();
-    if(!snap.data().bigFundV && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
+    state.settings = normalize(snap.data()); track('s',snap); render(); migrateCash(); migrateYearlySubs();
+    if((!snap.data().bigFundV || !snap.data().yearlyV) && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
   },fail));
   unsubs.push(fb.onSnapshot(R.expenses,o,snap=>{ state.expenses=snap.docs.map(d=>({...d.data(),id:d.id})); track('e',snap); render();
-    if(!snap.metadata.fromCache){ expFromServer=true; migrateCash(); } },fail));
+    if(!snap.metadata.fromCache){ expFromServer=true; migrateCash(); migrateYearlySubs(); } },fail));
   unsubs.push(fb.onSnapshot(R.months,o,snap=>{ const m={}; snap.docs.forEach(d=>m[d.id]=d.data()); state.months=m;
     if(!snap.metadata.fromCache) monthsFromServer=true; track('m',snap); render(); lockClosedMonths(); },fail));
   unsubs.push(fb.onSnapshot(R.payouts,o,snap=>{ state.payouts=snap.docs.map(d=>({...d.data(),id:d.id})); track('p',snap); render(); },fail));
@@ -525,10 +556,10 @@ function monthIncome(k){
 // Each closed month adds (envelope budget − spent). A month's budget is locked
 // into its month document once the month is over, so later budget changes
 // don't rewrite history.
-const envBudgetNow = () => sum(state.settings.categories.filter(c=>!c.fund && !c.archived), c=>c.budget);
+const envBudgetNow = () => sum(state.settings.categories.filter(isMonthly), c=>c.budget);
 function monthSpentEnv(k){
-  const fundIds = new Set(state.settings.categories.filter(c=>c.fund).map(c=>c.id));
-  return sum(state.expenses.filter(e=>(e.date||'').slice(0,7)===k && !fundIds.has(e.cat)), e=>num(e.eur));
+  const yIds = new Set(state.settings.categories.filter(isYearly).map(c=>c.id));
+  return sum(state.expenses.filter(e=>(e.date||'').slice(0,7)===k && !yIds.has(e.cat)), e=>num(e.eur));
 }
 function monthBudget(k){ const v=(state.months[k]||{}).budgetTotal; return v!=null ? num(v) : envBudgetNow(); }
 function closedMonths(){
@@ -557,8 +588,8 @@ function render(){
   $('prev').disabled = view <= minMonth();
   const mo = state.months[view] || {}; const sd=mo.savingsDone||{}, fd=mo.fixedDone||{};
   const exM = state.expenses.filter(e=>(e.date||'').slice(0,7)===view);
-  const envCats = s.categories.filter(c=>!c.fund && !c.archived);
-  const fundIds = new Set(s.categories.filter(c=>c.fund).map(c=>c.id));
+  const envCats = s.categories.filter(isMonthly);
+  const fundIds = new Set(s.categories.filter(isYearly).map(c=>c.id));
   const spentBy={}; exM.forEach(e=>spentBy[e.cat]=(spentBy[e.cat]||0)+num(e.eur));
   const budget = sum(envCats,c=>c.budget);
   const spent = sum(exM.filter(e=>!fundIds.has(e.cat)),e=>num(e.eur));
@@ -583,11 +614,19 @@ function render(){
       <div class="left ${rem<0?'over':''}">${rem<0?eur(-rem)+' over':eur(rem)+' left'}</div></div>`;
   }).join('');
 
+  { const yr=view.slice(0,4), b0=balances();
+    $('yearly').innerHTML = s.categories.filter(c=>isYearly(c)&&!c.archived).map(c=>{
+      const ytd=sum(state.expenses.filter(e=>e.cat===c.id && (e.date||'').slice(0,4)===yr),e=>num(e.eur));
+      const mon=spentBy[c.id]||0, bud=num(c.budgetYear), pct=bud?ytd/bud:(ytd>0?2:0);
+      const pot = c.fund ? `, set aside ${eur(b0.funds[c.fund]||0)}` : '';
+      return `<div class="row env" data-env="${c.id}" role="button" tabindex="0" aria-label="Show ${esc(c.name)} expenses"><div class="rowhead"><span class="name">${esc(c.name)} <span class="chev">›</span></span><span class="amt"><b>${eur(ytd)}</b> / ${eur(bud)} in ${yr}</span></div>
+        <div class="bar"><i class="${pct>1?'over':pct>.85?'warn':''}" style="width:${Math.min(pct,1)*100}%"></i></div>
+        <div class="left">${eur(mon)} this month${pot}</div></div>`; }).join('') || '<div class="empty">No yearly envelopes.</div>'; }
   const b=balances(), rate=s.usdRate||1.14, P=s.pots;
   const potLine = {
     emerg: `<div class="note">${eur(b.emerg)} of ${eur(s.emergGoal)} goal</div><div class="bar"><i style="width:${s.emergGoal?Math.min(Math.max(b.emerg,0)/s.emergGoal,1)*100:0}%"></i></div>`,
     ...Object.fromEntries(s.categories.filter(c=>c.fund).map(c=>{ const bal=b.funds[c.fund]||0;
-      const hint = c.fund==='carfund' ? 'Log insurance, service and tyres as "Car upkeep" expenses.' : c.fund==='bigfund' ? 'Log big purchases as "Big purchase" expenses.' : '';
+      const hint = `Pays for the "${c.name}" yearly envelope.`;
       return [c.fund, `<div class="note" style="${bal<0?'color:var(--red)':''}">Balance ${eur(bal)}. ${hint}</div>
         <div class="note"><button class="rm" style="color:var(--sea)" data-fundcat="${c.id}">Show what was paid from it</button></div>`]; })),
     family: `<div class="note">${usd(b.family)} in the account (about ${eur(b.family/rate)}). Your share ${usd(b.share)}.</div>
@@ -628,7 +667,8 @@ function render(){
       : `<div class="rowhead"><span>${monthName(curK)} (in progress)</span><span>${eur(curLeft)} left so far</span></div>
          <div class="note" style="padding-bottom:10px">The balance starts adding up once ${monthName(curK)} is over. Whatever you don't spend, or overspend, carries into the total.</div>`;
   }
-  const mi=monthIncome(view), inc=mi.total, fixT=sum(fx,f=>f.amount), savT=sum(s.savings,v=>v.amount), buf=inc-fixT-savT-budget;
+  const yNoPot=s.categories.filter(c=>isYearly(c)&&!c.fund&&!c.archived), yRes=sum(yNoPot,c=>num(c.budgetYear)/12);
+  const mi=monthIncome(view), inc=mi.total, fixT=sum(fx,f=>f.amount), savT=sum(s.savings,v=>v.amount), buf=inc-fixT-savT-budget-yRes;
   const KIND={fixed:'fixed',actual:'from statement',set:'entered',planned:'planned'};
   $('plan').innerHTML = `<div class="rowhead"><span><b>Income</b></span><span><b>${eur(inc)}</b></span></div>
     ${mi.parts.map(p=>`<div class="rowhead" style="font-size:14px;color:var(--muted);padding:4px 0 4px 12px"><span>${esc(p.inc.name)}, ${KIND[p.kind]}
@@ -636,6 +676,7 @@ function render(){
     <div class="rowhead"><span>Fixed costs</span><span>−${eur(fixT)}</span></div>
     <div class="rowhead"><span>Savings</span><span>−${eur(savT)}</span></div>
     <div class="rowhead"><span>Spending envelopes</span><span>−${eur(budget)}</span></div>
+    ${yRes?`<div class="rowhead"><span>Yearly envelopes without a pot (1/12)</span><span>−${eur(yRes)}</span></div>`:''}
     <div class="rowhead total"><span>Unplanned buffer</span><span style="color:${buf<0?'var(--red)':'inherit'}">${eur(buf)}</span></div>`;
 
   const catName = id => (s.categories.find(c=>c.id===id)||{name:'Other'}).name;
@@ -747,7 +788,8 @@ $('saveMom').onclick=()=>{ const v=num($('momAmt').value);
 function settingsForm(){
   const s=draft;
   const row=(label,key,val)=>`<span>${esc(label)}</span><input class="field" inputmode="decimal" data-set="${key}" value="${val}">`;
-  const envs = s.categories.map((c,i)=>({c,i})).filter(x=>!x.c.fund && !x.c.archived);
+  const envs = s.categories.map((c,i)=>({c,i})).filter(x=>isMonthly(x.c));
+  const yenvs = s.categories.map((c,i)=>({c,i})).filter(x=>isYearly(x.c) && !x.c.archived);
   $('setForm').innerHTML = `
     <div class="sec">Monthly income (€)</div><div class="grid">${s.incomes.map((x,i)=>row(x.name,'inc:'+i,x.amount)).join('')}</div>
     ${s.incomes.map((x,i)=>`<label style="display:flex;gap:10px;align-items:center;font-size:14px;color:var(--ink);margin:8px 0 0">
@@ -759,6 +801,12 @@ function settingsForm(){
         <input class="field" inputmode="decimal" data-set="cat:${i}" value="${c.budget}" aria-label="Budget">
         <button class="iconbtn" data-del="${i}" aria-label="Remove ${esc(c.name)}" style="color:var(--red)">✕</button></div>`).join('')}
     <button class="tick" id="addEnv" style="min-width:150px">Add envelope</button>
+    <div class="sec">Yearly envelopes (€ a year)</div>
+    ${yenvs.map(({c,i})=>`<div style="display:grid;grid-template-columns:1fr 90px 44px;gap:8px;align-items:center;margin-bottom:8px">
+        <input class="field" data-name="${i}" value="${esc(c.name)}" aria-label="Yearly envelope name">
+        <input class="field" inputmode="decimal" data-set="ycat:${i}" value="${num(c.budgetYear)}" aria-label="Yearly budget">
+        <button class="iconbtn" data-del="${i}" aria-label="Remove ${esc(c.name)}" style="color:var(--red)">✕</button></div>`).join('')}
+    <button class="tick" id="addYEnv" style="min-width:150px">Add yearly envelope</button>
     <div class="sec">Savings (€ a month)</div><div class="grid">${s.savings.map((x,i)=>row(x.name,'sav:'+i,x.amount)).join('')}</div>
     <div class="sec">Fixed costs (€ a month)</div><div class="grid">${s.fixed.map((x,i)=>row(x.name,'fix:'+i,x.amount)).join('')}</div>
     <div class="sec">Balances and goals</div><div class="grid">
@@ -777,6 +825,7 @@ function readForm(){
     const p=inp.dataset.set.split(':'), v=num(inp.value);
     if(p[0]==='inc') s.incomes[+p[1]].amount=v;
     if(p[0]==='cat') s.categories[+p[1]].budget=v;
+    if(p[0]==='ycat') s.categories[+p[1]].budgetYear=v;
     if(p[0]==='sav') s.savings[+p[1]].amount=v;
     if(p[0]==='fix') s.fixed[+p[1]].amount=v;
     if(p[0]==='pot'){ s.pots[p[1]]=s.pots[p[1]]||{}; s.pots[p[1]][p[2]]=v; }
@@ -791,6 +840,8 @@ $('setForm').onclick=e=>{
   if(t.id==='addEnv'){ readForm(); const n=draft.categories.length;
     draft.categories.push({id:newId('c'),name:'New envelope',budget:0,color:PALETTE[n%PALETTE.length]}); settingsForm();
     const last=[...document.querySelectorAll('#setForm [data-name]')].pop(); if(last){ last.focus(); last.select(); } }
+  if(t.id==='addYEnv'){ readForm(); const i=draft.categories.findIndex(c=>c.id==='carfix');
+    draft.categories.splice(i>=0?i:draft.categories.length,0,{id:newId('y'),name:'New yearly envelope',budget:0,yearly:true,budgetYear:0}); settingsForm(); }
   if(t.dataset.del){ readForm(); draft.categories[+t.dataset.del].archived=true; settingsForm(); }
 };
 $('saveSet').onclick=()=>{ readForm(); w(fb.setDoc(R.settings,draft)); $('setSheet').classList.remove('open'); };
@@ -820,7 +871,7 @@ function exportRows(){
   const summary=[], savings=[];
   monthsAll.forEach(k=>{
     const by={}; exs.filter(e=>e.date.slice(0,7)===k).forEach(e=>by[e.cat]=(by[e.cat]||0)+num(e.eur));
-    s.categories.filter(c=>!c.fund&&!c.archived).forEach(c=>summary.push({Month:k,Category:c.name,'Budget EUR':c.budget,'Spent EUR':Math.round((by[c.id]||0)*100)/100,'Left EUR':Math.round((c.budget-(by[c.id]||0))*100)/100}));
+    s.categories.filter(isMonthly).forEach(c=>summary.push({Month:k,Category:c.name,'Budget EUR':c.budget,'Spent EUR':Math.round((by[c.id]||0)*100)/100,'Left EUR':Math.round((c.budget-(by[c.id]||0))*100)/100}));
     Object.entries((state.months[k]||{}).savingsDone||{}).forEach(([id,v])=>savings.push({Month:k,Item:(s.savings.find(x=>x.id===id)||{name:id}).name,'Amount EUR':moveAmt(v)}));
   });
   const mom=state.payouts.map(p=>({Date:p.date,'Amount USD':p.usd}));
@@ -896,7 +947,9 @@ function mkey(desc){
   return norm(desc).split(' ').filter(w=>w && !/\d/.test(w) && !STRIP_WORDS.has(w)).slice(0,3).join(' ');
 }
 const BUILTIN = [
-  ['subs',['ADOBE','APPLE COM BILL','NETFLIX','HBO','HBOMAX','CLAUDE','ANTHROPIC','ELEMENTOR','FIGMA','SPOTIFY','AIRALO','DRAMABOX','UNION READ','RADAR','DREAMSTUDIOSCO']],
+  ['yearsubs',['ELEMENTOR','HBO','HBOMAX','ANNUAL MEMBERSHIP FEE','ANNUAL MEMBERSHIP']],
+  ['carfix',['EVINJETA','DARS EVINJETA']],
+  ['subs',['ADOBE','APPLE COM BILL','NETFLIX','CLAUDE','ANTHROPIC','FIGMA','SPOTIFY','AIRALO','DRAMABOX','UNION READ','RADAR','DREAMSTUDIOSCO']],
   ['travel',['CROATIA AIRLINES','LUFTHANSA','RYANAIR','CHASE TRAVEL','HOTEL','ALPINIA','AIRBNB','BOOKING','ARTOTEL','MZLZ','NATIONAL CAR RENTAL','AVANT CAR','HZ','INTERCONTINENTAL','UA INFLT','TP LINE']],
   ['health',['POLIKLINIKA','LJEKARNA','LJEKARNE','LEKARNA','LEKARNE','PHARMACY','CVS','KINETIS','AVIVA','FIZIODENT']],
   ['bills',['A1','A1 WEB','A1 HRVATSKA','MEDIMURJE PLIN','ZAGREBACKI HOLDING','HEP','ELEKTRO','TELEMACH']],
@@ -1178,18 +1231,20 @@ let envOpen=null, envAll=false;
 function envRender(){
   if(!envOpen || !state.settings || !$('envSheet').classList.contains('open')) return;
   const s=state.settings, c=s.categories.find(x=>x.id===envOpen); if(!c) return;
-  const list=state.expenses.filter(e=>e.cat===c.id && (e.date||'').slice(0,7)===view)
+  const yearlyEnv=isYearly(c), yr=view.slice(0,4);
+  const list=state.expenses.filter(e=>e.cat===c.id && (yearlyEnv ? (e.date||'').slice(0,4)===yr : (e.date||'').slice(0,7)===view))
     .sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0));
   const sp=sum(list,e=>num(e.eur)), pct=c.budget?sp/c.budget:(sp>0?2:0), rem=c.budget-sp;
   $('envTitle').textContent=c.name;
-  if(c.fund){ const bal=balances().funds[c.fund]||0;
-    $('envSummary').innerHTML=`<div class="rowhead"><span class="name">${monthName(view)}</span><span class="amt"><b>${eur(sp)}</b> paid from the fund</span></div>
-      <div class="left" style="${bal<0?'color:var(--red)':''}">Fund balance now ${eur(bal)}${list.length?', '+list.length+' expense'+(list.length>1?'s':'')+' this month':''}</div>`;
+  if(yearlyEnv){ const bud=num(c.budgetYear), p2=bud?sp/bud:(sp>0?2:0), bal=c.fund?(balances().funds[c.fund]||0):null;
+    $('envSummary').innerHTML=`<div class="rowhead"><span class="name">${yr}</span><span class="amt"><b>${eur(sp)}</b> / ${eur(bud)} this year</span></div>
+      <div class="bar"><i class="${p2>1?'over':p2>.85?'warn':''}" style="width:${Math.min(p2,1)*100}%"></i></div>
+      <div class="left">${bud-sp<0?eur(sp-bud)+' over the yearly budget':eur(bud-sp)+' left this year'}${bal!=null?`, set aside <span style="${bal<0?'color:var(--red)':''}">${eur(bal)}</span>`:''}</div>`;
   } else $('envSummary').innerHTML=`<div class="rowhead"><span class="name">${monthName(view)}</span><span class="amt"><b>${eur(sp)}</b> / ${eur(c.budget)}</span></div>
     <div class="bar"><i class="${pct>1?'over':pct>.85?'warn':''}" style="width:${Math.min(pct,1)*100}%"></i></div>
     <div class="left ${rem<0?'over':''}">${rem<0?eur(-rem)+' over':eur(rem)+' left'}${list.length?', '+list.length+' expense'+(list.length>1?'s':''):''}</div>`;
   const show = envAll ? list : list.slice(0,5);
-  $('envHead').textContent = list.length ? (envAll ? 'All expenses' : 'Latest') : '';
+  $('envHead').textContent = list.length ? (envAll ? (yearlyEnv?'All this year':'All expenses') : 'Latest') : '';
   $('envList').classList.toggle('all', envAll);
   $('envList').innerHTML = show.length ? show.map(e=>`<div class="row"><div class="rowhead"><span class="name">${esc(e.note||c.name)}</span><span class="amt"><b>${eur(e.eur)}</b></span></div>
     <div class="rowhead"><span class="meta">${shortDate(e.date)}${e.cur==='USD'?', $'+num(e.orig).toFixed(2):''}${e.by?', '+esc(e.by):''}</span>
@@ -1200,6 +1255,7 @@ function envRender(){
 }
 function openEnv(id){ envOpen=id; envAll=false; $('envSheet').classList.add('open'); $('envList').scrollTop=0; envRender(); }
 $('envelopes').addEventListener('click',e=>{ const r=e.target.closest('.env'); if(r) openEnv(r.dataset.env); });
+$('yearly').addEventListener('click',e=>{ const r=e.target.closest('.env'); if(r) openEnv(r.dataset.env); });
 $('envelopes').addEventListener('keydown',e=>{ const r=e.target.closest('.env'); if(r && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); openEnv(r.dataset.env); } });
 $('envMore').onclick=()=>{ envAll=!envAll; envRender(); };
 $('envAdd').onclick=()=>{
@@ -1217,6 +1273,15 @@ function saveSavAmount(amount){
 $('saveSav').onclick=()=>saveSavAmount(num($('savAmt').value));
 $('clearSav').onclick=()=>saveSavAmount(0);
 
+// one-time: yearly subscriptions logged before yearly envelopes existed
+let yearChecked=false;
+function migrateYearlySubs(){
+  if(yearChecked || !state.settings || !expFromServer || !state.settings.yearlyV) return; yearChecked=true;
+  if(state.settings.yearSubsMoved) return;
+  const hit=state.expenses.filter(e=>e.cat==='subs' && /elementor|hbo|annual membership/i.test(e.note||''));
+  const b=fb.writeBatch(db); hit.forEach(e=>b.update(fb.doc(R.expenses,e.id),{cat:'yearsubs'}));
+  b.set(R.settings,{yearSubsMoved:true},{merge:true}); w(b.commit());
+}
 // one-time: earlier cash withdrawals were filed under "Fun, home, kid"
 let cashChecked=false, expFromServer=false;
 function migrateCash(){
@@ -1234,18 +1299,22 @@ let expOpen=false;
 $('expToggle').onclick=()=>{ expOpen=!expOpen; render(); };
 
 // ---------- charts ----------
-let stView=null;
+let stView=null, stMode='month', stYear=null;
 function catColor(id){
-  const s=state.settings, envCats=s.categories.filter(c=>!c.fund && !c.archived), i=envCats.findIndex(c=>c.id===id);
-  return i>=0 ? PALETTE[i%PALETTE.length] : (id==='carfix' ? '#8F8A78' : '#9A9A9A');
+  const s=state.settings, envCats=s.categories.filter(isMonthly), i=envCats.findIndex(c=>c.id===id);
+  if(i>=0) return PALETTE[i%PALETTE.length];
+  const yc=s.categories.filter(c=>isYearly(c)&&!c.archived), j=yc.findIndex(c=>c.id===id);
+  return j>=0 ? ['#8F8A78','#B07D62','#6F7F96','#9A7FA0'][j%4] : '#9A9A9A';
 }
 function monthTotals(k){
-  const s=state.settings, fundIds=new Set(s.categories.filter(c=>c.fund).map(c=>c.id));
+  const s=state.settings, yIds=new Set(s.categories.filter(isYearly).map(c=>c.id));
+  const potIds=new Set(s.categories.filter(c=>c.fund).map(c=>c.id));
   const ex=state.expenses.filter(e=>(e.date||'').slice(0,7)===k), by={};
   ex.forEach(e=>by[e.cat]=(by[e.cat]||0)+num(e.eur));
   return { by,
-    spent: sum(ex.filter(e=>!fundIds.has(e.cat)),e=>num(e.eur)),
-    fund: sum(ex.filter(e=>fundIds.has(e.cat)),e=>num(e.eur)),
+    spent: sum(ex.filter(e=>!yIds.has(e.cat)),e=>num(e.eur)),
+    yearly: sum(ex.filter(e=>yIds.has(e.cat)),e=>num(e.eur)),
+    yearlyNoPot: sum(ex.filter(e=>yIds.has(e.cat)&&!potIds.has(e.cat)),e=>num(e.eur)),
     fixed: sum(s.fixed.filter(f=>!f.until || k<=f.until),f=>f.amount),
     saved: sum(Object.values((state.months[k]||{}).savingsDone||{}),moveAmt),
     income: monthIncome(k).total, budget: monthBudget(k) };
@@ -1260,9 +1329,26 @@ function donutSvg(slices,total){
     <text x="90" y="86" text-anchor="middle" style="fill:var(--ink);font-size:22px;font-weight:700;font-family:inherit">${eur(total)}</text>
     <text x="90" y="106" text-anchor="middle" style="fill:var(--muted);font-size:11px;font-family:inherit">spent</text></svg>`;
 }
-const SERIES=[{k:'income',name:'Income',color:'#D9B27C'},{k:'spent',name:'Spending',color:'#2B5A43'},{k:'fixed',name:'Fixed costs',color:'#6E2A40'},{k:'saved',name:'Saved',color:'#7FB08F'}];
+const SERIES=[{k:'income',name:'Income',color:'#D9B27C'},{k:'allSpent',name:'Spending',color:'#2B5A43'},{k:'fixed',name:'Fixed costs',color:'#6E2A40'},{k:'saved',name:'Saved',color:'#7FB08F'}];
+function barsSvg(data,selKey,label){
+  if(!data.length) return '';
+  const max=Math.max(1,...data.flatMap(d=>SERIES.map(x=>d[x.k]||0)));
+  const W=340,H=170,top=8,bottom=22,gw=W/data.length,bw=Math.max(2,Math.min(12,(gw-8)/4-1));
+  const bars=data.map((d,i)=>{ const x0=i*gw+(gw-(bw+1)*4)/2;
+    return `<g data-sm="${d.m}" style="cursor:pointer"><rect x="${i*gw}" y="0" width="${gw}" height="${H}" fill="transparent"/>`
+      + (d.empty?'':SERIES.map((sr,j)=>{ const h=((d[sr.k]||0)/max)*(H-top-bottom); return `<rect x="${x0+j*(bw+1)}" y="${H-bottom-h}" width="${bw}" height="${Math.max(h,0.5)}" rx="1.5" fill="${sr.color}"/>`; }).join(''))
+      + `<text x="${i*gw+gw/2}" y="${H-6}" text-anchor="middle" class="${d.m===selKey?'sel':''}">${label(d.m)}</text></g>`; }).join('');
+  return `<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Income, spending, fixed costs and savings per month">
+    <line x1="0" x2="${W}" y1="${H-bottom}" y2="${H-bottom}" stroke="var(--line)"/>${bars}</svg>`;
+}
+const withAll = t => ({...t, allSpent:t.spent+t.yearly});
 function statRender(){
   if(!$('statSheet').classList.contains('open') || !state.settings) return;
+  document.querySelectorAll('#stSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===stMode));
+  $('stMonthView').hidden = stMode!=='month'; $('stYearView').hidden = stMode!=='year';
+  const keyHtml=SERIES.map(x=>`<span><span class="sw" style="background:${x.color}"></span>${x.name}</span>`).join('');
+  $('stKey').innerHTML=keyHtml; document.querySelectorAll('.stKeyCopy').forEach(el=>el.innerHTML=keyHtml);
+  if(stMode==='year') return yearRender();
   const s=state.settings, min=minMonth(), cur=monthKey(new Date());
   if(stView<min) stView=min;
   $('stMonth').textContent=monthName(stView);
@@ -1270,40 +1356,74 @@ function statRender(){
   $('stNext').disabled = stView>=cur;
   const t=monthTotals(stView);
   const slices=Object.entries(t.by).filter(([,v])=>v>0).map(([id,v])=>{ const c=s.categories.find(x=>x.id===id)||{name:'Other'};
-    return {id,v,name:c.name+(c.fund?' (from fund)':''),color:catColor(id)}; }).sort((a,b)=>b.v-a.v);
+    return {id,v,name:c.name+(isYearly(c)?' (yearly)':''),color:catColor(id)}; }).sort((a,b)=>b.v-a.v);
   const total=sum(slices,x=>x.v);
   $('stDonut').innerHTML=donutSvg(slices,total);
   $('stLegend').innerHTML = slices.length ? slices.map(x=>`<div class="rowhead"><span><span class="sw" style="background:${x.color}"></span>${esc(x.name)}</span>
       <span class="amt"><b>${eur(x.v)}</b> ${Math.round(x.v/total*100)}%</span></div>`).join('')
-      + `<div class="note" style="margin-top:6px">${eur(t.spent)} of ${eur(t.budget)} spending budget${t.fund?', plus '+eur(t.fund)+' paid from savings funds':''}.</div>`
+      + `<div class="note" style="margin-top:6px">${eur(t.spent)} of ${eur(t.budget)} monthly budget${t.yearly?', plus '+eur(t.yearly)+' from yearly envelopes':''}.</div>`
     : `<div class="empty" style="text-align:center">No expenses in ${monthName(stView)}.</div>`;
-  // last 6 months ending at the viewed month, never before the start month
   const months=[]; let k=stView; while(months.length<6 && k>=min){ months.unshift(k); k=shiftMonth(k,-1); }
-  const data=months.map(m=>({m,...monthTotals(m)}));
-  const max=Math.max(1,...data.flatMap(d=>SERIES.map(x=>d[x.k])));
-  const W=340,H=170,top=8,bottom=22,gw=W/months.length,bw=Math.min(12,(gw-12)/4);
-  const bars=data.map((d,i)=>{ const x0=i*gw+(gw-bw*4-6)/2;
-    return `<g data-sm="${d.m}" style="cursor:pointer"><rect x="${i*gw}" y="0" width="${gw}" height="${H}" fill="transparent"/>`
-      + SERIES.map((sr,j)=>{ const h=(d[sr.k]/max)*(H-top-bottom); return `<rect x="${x0+j*(bw+2)}" y="${H-bottom-h}" width="${bw}" height="${Math.max(h,0.5)}" rx="2" fill="${sr.color}"/>`; }).join('')
-      + `<text x="${i*gw+gw/2}" y="${H-6}" text-anchor="middle" class="${d.m===stView?'sel':''}">${new Date(d.m+'-01T12:00').toLocaleDateString('en-GB',{month:'short'})}</text></g>`; }).join('');
-  $('stKey').innerHTML=SERIES.map(x=>`<span><span class="sw" style="background:${x.color}"></span>${x.name}</span>`).join('');
-  $('stBars').innerHTML=`<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Income, spending, fixed costs and savings per month">
-    <line x1="0" x2="${W}" y1="${H-bottom}" y2="${H-bottom}" stroke="var(--line)"/>${bars}</svg>`
+  $('stBars').innerHTML = barsSvg(months.map(m=>({m,...withAll(monthTotals(m))})), stView, m=>new Date(m+'-01T12:00').toLocaleDateString('en-GB',{month:'short'}))
     + (months.length<2 ? `<div class="note">More months appear here as the budget runs. It starts in ${monthName(min)}.</div>`:'');
-  const left=t.income-t.spent-t.fixed-t.saved;
+  const left=t.income-t.spent-t.yearlyNoPot-t.fixed-t.saved;
   $('stDetail').innerHTML=`<div class="rowhead"><span>Income</span><span>${eur(t.income)}</span></div>
-    <div class="rowhead"><span>Spending</span><span>−${eur(t.spent)}</span></div>
-    ${t.fund?`<div class="rowhead" style="color:var(--muted)"><span>Paid from savings funds</span><span>${eur(t.fund)}</span></div>`:''}
+    <div class="rowhead"><span>Monthly spending</span><span>−${eur(t.spent)}</span></div>
+    ${t.yearlyNoPot?`<div class="rowhead"><span>Yearly envelopes</span><span>−${eur(t.yearlyNoPot)}</span></div>`:''}
+    ${t.yearly-t.yearlyNoPot>0?`<div class="rowhead" style="color:var(--muted)"><span>Paid from savings pots</span><span>${eur(t.yearly-t.yearlyNoPot)}</span></div>`:''}
     <div class="rowhead"><span>Fixed costs</span><span>−${eur(t.fixed)}</span></div>
     <div class="rowhead"><span>Saved</span><span>−${eur(t.saved)}</span></div>
     <div class="rowhead total"><span>Left over in ${monthName(stView)}</span><span style="color:${left<0?'var(--red)':'inherit'}">${eur(left)}</span></div>`;
 }
-function openStats(){ if(!state.settings) return; stView=view; $('statSheet').classList.add('open'); statRender(); }
+function yearRender(){
+  const s=state.settings, min=minMonth(), cur=monthKey(new Date()), minY=+min.slice(0,4), curY=+cur.slice(0,4);
+  if(!stYear) stYear=+stView.slice(0,4);
+  stYear=Math.min(Math.max(stYear,minY),curY);
+  $('stYearLabel').textContent=stYear; $('stYPrev').disabled=stYear<=minY; $('stYNext').disabled=stYear>=curY;
+  const all=[...Array(12)].map((_,i)=>stYear+'-'+pad(i+1));
+  const counted=all.filter(m=>m>=min && m<=cur);
+  const T=counted.map(m=>({m,...monthTotals(m)}));
+  const tot=k=>sum(T,x=>x[k]);
+  const income=tot('income'), spent=tot('spent'), yearly=tot('yearly'), yNoPot=tot('yearlyNoPot'), fixed=tot('fixed'), saved=tot('saved');
+  const left=income-spent-yNoPot-fixed-saved;
+  const span = counted.length ? `${new Date(counted[0]+'-01T12:00').toLocaleDateString('en-GB',{month:'short'})} to ${new Date(counted[counted.length-1]+'-01T12:00').toLocaleDateString('en-GB',{month:'short'})} ${stYear}` : '';
+  $('stYearTotals').innerHTML = counted.length ? `<div class="note" style="margin-bottom:4px">${span}, ${counted.length} month${counted.length>1?'s':''}</div>
+    <div class="rowhead"><span>Income</span><span>${eur(income)}</span></div>
+    <div class="rowhead"><span>Monthly spending</span><span>−${eur(spent)}</span></div>
+    <div class="rowhead"><span>Yearly envelopes</span><span>${eur(yearly)}</span></div>
+    <div class="rowhead"><span>Fixed costs</span><span>−${eur(fixed)}</span></div>
+    <div class="rowhead"><span>Saved</span><span>−${eur(saved)}</span></div>
+    <div class="rowhead total"><span>Left over</span><span style="color:${left<0?'var(--red)':'inherit'}">${eur(left)}</span></div>
+    <div class="note">Yearly envelopes paid from your car and big-purchase pots don't reduce "left over"; that money was saved earlier.</div>`
+    : `<div class="empty">The budget starts in ${monthName(min)}.</div>`;
+  $('stYearBars').innerHTML = barsSvg(all.map(m=>counted.includes(m)?{m,...withAll(monthTotals(m))}:{m,empty:true}), null, m=>new Date(m+'-01T12:00').toLocaleDateString('en-GB',{month:'narrow'}));
+  // envelopes over the year
+  const byCat={}; T.forEach(x=>Object.entries(x.by).forEach(([id,v])=>byCat[id]=(byCat[id]||0)+v));
+  const yc=s.categories.filter(c=>isYearly(c)&&!c.archived);
+  $('stYearly').innerHTML = yc.map(c=>{ const sp=byCat[c.id]||0, b=num(c.budgetYear), pct=b?sp/b:(sp>0?2:0);
+    return `<div class="row"><div class="rowhead"><span class="name">${esc(c.name)}</span><span class="amt"><b>${eur(sp)}</b> / ${eur(b)}</span></div>
+      <div class="bar"><i class="${pct>1?'over':pct>.85?'warn':''}" style="width:${Math.min(pct,1)*100}%"></i></div></div>`; }).join('');
+  const mc=s.categories.filter(isMonthly);
+  $('stYearEnv').innerHTML = mc.map(c=>{ const sp=byCat[c.id]||0, b=c.budget*counted.length, pct=b?sp/b:(sp>0?2:0);
+    return `<div class="row"><div class="rowhead"><span class="name">${esc(c.name)}</span><span class="amt"><b>${eur(sp)}</b> / ${eur(b)}</span></div>
+      <div class="bar"><i class="${pct>1?'over':pct>.85?'warn':''}" style="width:${Math.min(pct,1)*100}%"></i></div></div>`; }).join('')
+    + (counted.length ? `<div class="note" style="margin-top:6px">Budget = monthly amount × ${counted.length} month${counted.length>1?'s':''}.</div>`:'');
+  // yearly and irregular payments, newest first
+  const yIds=new Set(yc.map(c=>c.id)), catName=id=>(s.categories.find(c=>c.id===id)||{name:''}).name;
+  const pays=state.expenses.filter(e=>yIds.has(e.cat) && (e.date||'').slice(0,4)===String(stYear) && e.date.slice(0,7)>=min).sort((a,b)=>b.date.localeCompare(a.date));
+  $('stYearPays').innerHTML = pays.length ? pays.map(e=>`<div class="rowhead" style="padding:8px 0;border-bottom:1px solid var(--line)"><span>${esc(e.note||catName(e.cat))}<br><span class="note">${shortDate(e.date)}, ${esc(catName(e.cat))}</span></span><span class="amt"><b>${eur(e.eur)}</b></span></div>`).join('')
+    : `<div class="note">None yet in ${stYear}.</div>`;
+}
+function openStats(){ if(!state.settings) return; stView=view; stYear=+view.slice(0,4); $('statSheet').classList.add('open'); statRender(); }
 $('hero').addEventListener('click',e=>{ if(e.target.closest('#heroBig')) openStats(); });
 $('hero').addEventListener('keydown',e=>{ if(e.target.closest('#heroBig') && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); openStats(); } });
 $('stPrev').onclick=()=>{ stView=shiftMonth(stView,-1); statRender(); };
 $('stNext').onclick=()=>{ stView=shiftMonth(stView,1); statRender(); };
+$('stYPrev').onclick=()=>{ stYear--; statRender(); };
+$('stYNext').onclick=()=>{ stYear++; statRender(); };
+$('stSeg').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; stMode=b.dataset.mode; statRender(); };
 $('stBars').addEventListener('click',e=>{ const g=e.target.closest('[data-sm]'); if(g){ stView=g.dataset.sm; statRender(); } });
+$('stYearBars').addEventListener('click',e=>{ const g=e.target.closest('[data-sm]'); if(g && g.dataset.sm>=minMonth() && g.dataset.sm<=monthKey(new Date())){ stView=g.dataset.sm; stMode='month'; statRender(); } });
 
 // search box
 $('expSearch').addEventListener('input',()=>render());
