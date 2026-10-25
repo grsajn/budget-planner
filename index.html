@@ -211,13 +211,13 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
     <button class="tick" style="min-width:150px" id="openStatement">Import statement</button>
   </div>
   <div class="status" id="status"></div>
-  <div class="status" style="opacity:.6">App version 2026-10-26 (yearly)</div>
+  <div class="status" style="opacity:.6">App version 2026-10-26 (yearly pot)</div>
 </div>
 <button class="fab" id="openAdd">Add expense</button>
 </div>
 
 <div class="sheet" id="addSheet" role="dialog" aria-modal="true" aria-label="Add expense"><div class="card">
-  <div class="cardhead"><h3>Add expense</h3><button class="iconbtn" data-close="addSheet" aria-label="Close">✕</button></div>
+  <div class="cardhead"><h3 id="addTitle">Add expense</h3><button class="iconbtn" data-close="addSheet" aria-label="Close">✕</button></div>
   <div class="amountin">
     <input id="amt" inputmode="decimal" placeholder="0" aria-label="Amount">
     <div class="seg" id="curSeg"><button data-cur="EUR" class="on">€</button><button data-cur="USD">$</button></div>
@@ -228,6 +228,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
   <label for="dateIn">Date</label>
   <input class="field" id="dateIn" type="date">
   <div class="note" id="convNote"></div>
+  <label id="remWrap" hidden style="display:flex;gap:10px;align-items:center;font-size:15px;color:var(--ink);margin-top:14px"><input type="checkbox" id="remRule" checked style="width:22px;height:22px"> Use this envelope for this shop in future imports</label>
   <button class="primary" id="saveExp" disabled>Save expense</button>
 </div></div>
 
@@ -390,7 +391,7 @@ const DEFAULTS = {
     {id:'son',name:"Son's account",amount:100}
   ],
   emergGoal:15000, momTarget:25000, balanceStart:'2026-10',
-  pots:{emerg:{start:0},carfund:{start:0},bigfund:{start:0},family:{value:50000,valueDate:'2026-10-23'},son:{value:11000,valueDate:'2026-10-23'}}
+  pots:{emerg:{start:0},carfund:{start:0},bigfund:{start:0},yearfund:{start:0},family:{value:50000,valueDate:'2026-10-23'},son:{value:11000,valueDate:'2026-10-23'}}
 };
 
 // ---------- helpers ----------
@@ -439,6 +440,20 @@ function normalize(src){
       s.categories.splice(i>=0?i:s.categories.length,0,{id:'yearsubs',name:'Yearly subscriptions',budget:0,yearly:true,budgetYear:950}); }
     s.yearlyV=true;
   }
+  if(!s.yearPotV){
+    if(!s.savings.some(v=>v.id==='yearfund')){ const i=s.savings.findIndex(v=>v.id==='bigfund');
+      s.savings.splice(i>=0?i+1:s.savings.length,0,{id:'yearfund',name:'Yearly bills pot',auto:'yearfund',amount:0}); }
+    s.pots.yearfund = s.pots.yearfund || {start:0};
+    // every yearly envelope without its own pot is paid from the yearly bills pot
+    s.categories.filter(c=>c.yearly && !c.fund).forEach(c=>c.fund='yearfund');
+    const before=s.categories.findIndex(c=>c.id==='carfix'), at=before>=0?before:s.categories.length;
+    if(!s.categories.some(c=>c.fund==='yearfund' && /insur|zavarov|osigur/i.test(c.name)))
+      s.categories.splice(at,0,{id:'yhealth',name:'Health insurance',budget:0,yearly:true,budgetYear:200,fund:'yearfund'});
+    if(!s.categories.some(c=>c.id==='yextra')){ const b2=s.categories.findIndex(c=>c.id==='carfix');
+      s.categories.splice(b2>=0?b2:s.categories.length,0,{id:'yextra',name:'Unplanned yearly costs',budget:0,yearly:true,budgetYear:300,fund:'yearfund'}); }
+    s.yearPotV=true;
+  }
+  if(!s.extra300V){ const x=s.categories.find(c=>c.id==='yextra'); if(x && num(x.budgetYear)===600) x.budgetYear=300; s.extra300V=true; }
   DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id)) s.savings.push(clone(d)); });
   ['v2','v3','v4','v5','emergStart','carfundStart'].forEach(k=>delete s[k]);
   return s;
@@ -505,7 +520,7 @@ function startSync(){
   unsubs.push(fb.onSnapshot(R.settings,o,snap=>{
     if(!snap.exists()){ if(!snap.metadata.fromCache) w(fb.setDoc(R.settings, normalize(DEFAULTS))); return; }
     state.settings = normalize(snap.data()); track('s',snap); render(); migrateCash(); migrateYearlySubs();
-    if((!snap.data().bigFundV || !snap.data().yearlyV) && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
+    if((!snap.data().bigFundV || !snap.data().yearlyV || !snap.data().yearPotV || !snap.data().extra300V) && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
   },fail));
   unsubs.push(fb.onSnapshot(R.expenses,o,snap=>{ state.expenses=snap.docs.map(d=>({...d.data(),id:d.id})); track('e',snap); render();
     if(!snap.metadata.fromCache){ expFromServer=true; migrateCash(); migrateYearlySubs(); } },fail));
@@ -517,6 +532,11 @@ function startSync(){
 function stopSync(){ unsubs.forEach(u=>u()); unsubs=[]; }
 
 // ---------- calculations ----------
+function savAmount(sv){
+  if(!sv) return 0;
+  if(sv.auto) return Math.ceil(sum(state.settings.categories.filter(c=>c.fund===sv.auto && !c.archived),c=>num(c.budgetYear))/12);
+  return num(sv.amount);
+}
 const moveAmt = v => typeof v==='number' ? v : num(v && v.amount);
 function moves(id){
   return Object.entries(state.months).flatMap(([k,m])=>{ const v=(m.savingsDone||{})[id];
@@ -527,8 +547,9 @@ function balances(){
   const b={};
   b.emerg = num(P.emerg.start) + sum(moves('emerg'),x=>x.amount);
   b.funds={};
-  s.categories.filter(c=>c.fund).forEach(c=>{ const f=c.fund;
-    b.funds[f] = num((P[f]||{}).start) + sum(moves(f),x=>x.amount) - sum(state.expenses.filter(e=>e.cat===c.id),e=>num(e.eur)); });
+  [...new Set(s.categories.filter(c=>c.fund).map(c=>c.fund))].forEach(f=>{
+    const ids=new Set(s.categories.filter(c=>c.fund===f).map(c=>c.id));
+    b.funds[f] = num((P[f]||{}).start) + sum(moves(f),x=>x.amount) - sum(state.expenses.filter(e=>ids.has(e.cat)),e=>num(e.eur)); });
   b.carfund = b.funds.carfund||0;
   const usdVal = id => num(P[id].value) + sum(moves(id).filter(x=>x.date>(P[id].valueDate||'')),x=>x.amount*rate);
   b.family = usdVal('family'); b.son = usdVal('son');
@@ -625,10 +646,10 @@ function render(){
   const b=balances(), rate=s.usdRate||1.14, P=s.pots;
   const potLine = {
     emerg: `<div class="note">${eur(b.emerg)} of ${eur(s.emergGoal)} goal</div><div class="bar"><i style="width:${s.emergGoal?Math.min(Math.max(b.emerg,0)/s.emergGoal,1)*100:0}%"></i></div>`,
-    ...Object.fromEntries(s.categories.filter(c=>c.fund).map(c=>{ const bal=b.funds[c.fund]||0;
-      const hint = `Pays for the "${c.name}" yearly envelope.`;
-      return [c.fund, `<div class="note" style="${bal<0?'color:var(--red)':''}">Balance ${eur(bal)}. ${hint}</div>
-        <div class="note"><button class="rm" style="color:var(--sea)" data-fundcat="${c.id}">Show what was paid from it</button></div>`]; })),
+    ...Object.fromEntries([...new Set(s.categories.filter(c=>c.fund&&!c.archived).map(c=>c.fund))].map(f=>{ const bal=b.funds[f]||0;
+      const cats=s.categories.filter(c=>c.fund===f && !c.archived);
+      return [f, `<div class="note" style="${bal<0?'color:var(--red)':''}">Balance ${eur(bal)}. Pays for: ${cats.map(c=>esc(c.name)).join(', ')}.</div>
+        <div class="note">${cats.map(c=>`<button class="rm" style="color:var(--sea);margin-right:12px" data-fundcat="${c.id}">${cats.length>1?esc(c.name):'Show what was paid from it'}</button>`).join('')}</div>`]; })),
     family: `<div class="note">${usd(b.family)} in the account (about ${eur(b.family/rate)}). Your share ${usd(b.share)}.</div>
       <div class="note">Value from ${shortDate(P.family.valueDate)}, plus transfers since. <button class="rm" style="color:var(--sea)" data-val="family">Update value</button></div>`,
     son: `<div class="note">${usd(b.son)} (about ${eur(b.son/rate)})</div>
@@ -637,7 +658,7 @@ function render(){
   $('savings').innerHTML = `<div class="row"><div class="rowhead"><span class="name"><b>Total saved</b></span><span class="amt"><b>${eur(b.total)}</b></span></div>
       <div class="note">Euro savings, car fund, your share of the family account and your son's account</div></div>` +
     s.savings.map(sv=>{ const done=sd[sv.id]!=null, amt=done?moveAmt(sd[sv.id]):0;
-      return `<div class="row"><div class="check"><div><div class="name">${esc(sv.name)}</div><div class="note">${eur(sv.amount)} a month planned
+      return `<div class="row"><div class="check"><div><div class="name">${esc(sv.name)}</div><div class="note">${eur(savAmount(sv))} a month planned${sv.auto?' (1/12 of its yearly envelopes)':''}
           <button class="rm" style="color:var(--sea);margin-left:6px" data-savamt="${sv.id}">${done?'Change amount':'Other amount'}</button></div></div>
         <button class="tick ${done?'done':''}" data-sav="${sv.id}">${done?'Moved '+eur(amt):'Mark moved'}</button></div>${potLine[sv.id]||''}</div>`;
     }).join('') + (b.emerg>=s.emergGoal && s.emergGoal>0 ? `<div class="row"><div class="hint">Euro savings reached its goal. Raise the goal for the house, or move the monthly amount into family investing.</div></div>`:'');
@@ -668,7 +689,7 @@ function render(){
          <div class="note" style="padding-bottom:10px">The balance starts adding up once ${monthName(curK)} is over. Whatever you don't spend, or overspend, carries into the total.</div>`;
   }
   const yNoPot=s.categories.filter(c=>isYearly(c)&&!c.fund&&!c.archived), yRes=sum(yNoPot,c=>num(c.budgetYear)/12);
-  const mi=monthIncome(view), inc=mi.total, fixT=sum(fx,f=>f.amount), savT=sum(s.savings,v=>v.amount), buf=inc-fixT-savT-budget-yRes;
+  const mi=monthIncome(view), inc=mi.total, fixT=sum(fx,f=>f.amount), savT=sum(s.savings,savAmount), buf=inc-fixT-savT-budget-yRes;
   const KIND={fixed:'fixed',actual:'from statement',set:'entered',planned:'planned'};
   $('plan').innerHTML = `<div class="rowhead"><span><b>Income</b></span><span><b>${eur(inc)}</b></span></div>
     ${mi.parts.map(p=>`<div class="rowhead" style="font-size:14px;color:var(--muted);padding:4px 0 4px 12px"><span>${esc(p.inc.name)}, ${KIND[p.kind]}
@@ -693,7 +714,7 @@ function render(){
   } else $('expCount').textContent='';
   $('expenses').innerHTML = list.length ? list.map(e=>`<div class="row"><div class="rowhead"><span class="name">${esc(e.note||catName(e.cat))}</span><span class="amt"><b>${eur(e.eur)}</b></span></div>
     <div class="rowhead"><span class="meta">${esc(catName(e.cat))}, ${shortDate(e.date)}${e.cur==='USD'?', $'+num(e.orig).toFixed(2):''}${e.by?', '+esc(e.by):''}</span>
-    <button class="rm" data-rm="${esc(e.id)}">Remove</button></div></div>`).join('')
+    <span><button class="rm" style="color:var(--sea);margin-right:14px" data-edit="${esc(e.id)}">Edit</button><button class="rm" data-rm="${esc(e.id)}">Remove</button></span></div></div>`).join('')
     : (q.length ? `<div class="empty">Nothing matches "${esc($('expSearch').value.trim())}"${allM?'':' in '+monthName(view)}.${allM?'':' Tick "All months" to search everything.'}</div>`
        : `<div class="empty">No expenses logged for ${monthName(view)} yet. Tap Add expense to log the first one.</div>`);
 }
@@ -730,18 +751,19 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('button'); if(!t||!state.settings) return;
   if(t.dataset.close){ $(t.dataset.close).classList.remove('open'); return; }
   if(t.dataset.sav){ const id=t.dataset.sav, cur=((state.months[view]||{}).savingsDone||{})[id];
-    const amount=state.settings.savings.find(v=>v.id===id).amount;
+    const amount=savAmount(state.settings.savings.find(v=>v.id===id));
     const date = view===monthKey(new Date()) ? today() : view+'-28';
     w(fb.setDoc(fb.doc(R.months,view),{savingsDone:{[id]: cur!=null ? fb.deleteField() : {amount,date}}},{merge:true})); }
   if(t.dataset.savamt){ const sv=state.settings.savings.find(v=>v.id===t.dataset.savamt), cur=((state.months[view]||{}).savingsDone||{})[sv.id];
     savEdit=sv.id; $('savTitle').textContent=sv.name;
-    $('savNote').textContent=`How much did you move in ${monthName(view)}? Planned is ${eur(sv.amount)}. If you moved money more than once, enter the total.`;
+    $('savNote').textContent=`How much did you move in ${monthName(view)}? Planned is ${eur(savAmount(sv))}. If you moved money more than once, enter the total.`;
     $('savAmt').value = cur!=null ? moveAmt(cur) : ''; $('savSheet').classList.add('open'); setTimeout(()=>$('savAmt').focus(),150); return; }
   if(t.dataset.incset){ const inc=state.settings.incomes.find(x=>x.id===t.dataset.incset), p=monthIncome(view).parts.find(x=>x.inc.id===inc.id);
     incEdit=inc.id; $('incTitle').textContent=inc.name;
     $('incNote').textContent=`What actually came in for ${monthName(view)}? This replaces the ${p.kind==='actual'?'amount from the statement':'planned '+eur(inc.amount)} for this month.`;
     $('incAmt').value = p.kind==='planned' ? '' : Math.round(p.amount*100)/100; $('incSheet').classList.add('open'); setTimeout(()=>$('incAmt').focus(),150); return; }
   if(t.dataset.fundcat){ openEnv(t.dataset.fundcat); return; }
+  if(t.dataset.edit){ openEdit(t.dataset.edit); return; }
   if(t.dataset.fix){ const id=t.dataset.fix, cur=!!((state.months[view]||{}).fixedDone||{})[id];
     w(fb.setDoc(fb.doc(R.months,view),{fixedDone:{[id]: cur ? fb.deleteField() : true}},{merge:true})); }
   if(t.dataset.rm){
@@ -758,12 +780,22 @@ function updateAdd(){
   const v=num($('amt').value); $('saveExp').disabled=!(v>0&&addCat);
   $('convNote').textContent = addCur==='USD'&&v>0 ? `Logged as ${eur(v/state.settings.usdRate)} at $${state.settings.usdRate} per €` : '';
 }
+let editId=null, editOrigCat=null;
+function fillChips(){ $('catChips').innerHTML = state.settings.categories.filter(c=>!c.archived).map(c=>`<button class="chip${c.id===addCat?' on':''}" data-cat="${c.id}">${esc(c.name)}${isYearly(c)?' (yearly)':''}</button>`).join(''); }
+function setCur(cur){ addCur=cur; document.querySelectorAll('#curSeg button').forEach(x=>x.classList.toggle('on',x.dataset.cur===cur)); }
+function openEdit(id){
+  const e=state.expenses.find(x=>x.id===id); if(!e) return;
+  editId=id; editOrigCat=e.cat; addCat=e.cat; setCur(e.cur==='USD'?'USD':'EUR');
+  $('addTitle').textContent='Edit expense'; $('saveExp').textContent='Save changes'; $('remWrap').hidden=false;
+  $('amt').value=num(e.cur==='USD'?e.orig:e.eur); $('noteIn').value=e.note||''; $('dateIn').value=e.date;
+  fillChips(); updateAdd(); $('envSheet').classList.remove('open'); $('addSheet').classList.add('open');
+}
 $('openAdd').onclick=()=>{
   if(!state.settings) return;
+  editId=null; $('addTitle').textContent='Add expense'; $('saveExp').textContent='Save expense'; $('remWrap').hidden=true;
   $('amt').value=''; $('noteIn').value=''; addCat=null;
   $('dateIn').value = view===monthKey(new Date()) ? today() : view+'-01';
-  $('catChips').innerHTML = state.settings.categories.filter(c=>!c.archived).map(c=>`<button class="chip" data-cat="${c.id}">${esc(c.name)}</button>`).join('');
-  updateAdd(); $('addSheet').classList.add('open'); setTimeout(()=>$('amt').focus(),150);
+  fillChips(); updateAdd(); $('addSheet').classList.add('open'); setTimeout(()=>$('amt').focus(),150);
 };
 $('catChips').onclick=e=>{ const b=e.target.closest('.chip'); if(!b) return; addCat=b.dataset.cat;
   document.querySelectorAll('#catChips .chip').forEach(c=>c.classList.toggle('on',c===b)); updateAdd(); };
@@ -771,9 +803,13 @@ $('curSeg').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; addC
   document.querySelectorAll('#curSeg button').forEach(x=>x.classList.toggle('on',x===b)); updateAdd(); };
 $('amt').oninput=updateAdd;
 $('saveExp').onclick=()=>{
-  const v=num($('amt').value), date=$('dateIn').value||today(), rate=state.settings.usdRate;
-  w(fb.setDoc(fb.doc(R.expenses,newId('e')),{cat:addCat,note:$('noteIn').value.trim(),date,cur:addCur,orig:v,
-    eur:Math.round((addCur==='USD'?v/rate:v)*100)/100,by:who(),createdAt:Date.now()}));
+  const v=num($('amt').value), date=$('dateIn').value||today(), rate=state.settings.usdRate, note=$('noteIn').value.trim();
+  const fields={cat:addCat,note,date,cur:addCur,orig:v,eur:Math.round((addCur==='USD'?v/rate:v)*100)/100};
+  if(editId){
+    w(fb.setDoc(fb.doc(R.expenses,editId),{...fields,editedBy:who(),editedAt:Date.now()},{merge:true}));
+    const k=mkey(note); if($('remRule').checked && addCat!==editOrigCat && k && !/KEKS PAY/.test(norm(note))) w(fb.setDoc(R.settings,{rules:{[k]:addCat}},{merge:true}));
+    editId=null;
+  } else w(fb.setDoc(fb.doc(R.expenses,newId('e')),{...fields,by:who(),createdAt:Date.now()}));
   view=date.slice(0,7); $('addSheet').classList.remove('open'); render();
 };
 
@@ -796,18 +832,20 @@ function settingsForm(){
       <input type="checkbox" data-incfix="${i}" ${x.fixed?'checked':''} style="width:20px;height:20px"> ${esc(x.name)} is always the same</label>`).join('')}
     <div class="note" style="margin-top:6px">Unticked incomes are read from your statements (or entered with "Set" in Monthly plan). The amount above is used until then.</div>
     <div class="sec">Spending envelopes (€ a month)</div>
-    ${envs.map(({c,i})=>`<div style="display:grid;grid-template-columns:1fr 90px 44px;gap:8px;align-items:center;margin-bottom:8px">
+    ${envs.map(({c,i})=>`<div style="display:grid;grid-template-columns:1fr 80px auto 40px;gap:6px;align-items:center;margin-bottom:8px">
         <input class="field" data-name="${i}" value="${esc(c.name)}" aria-label="Envelope name">
         <input class="field" inputmode="decimal" data-set="cat:${i}" value="${c.budget}" aria-label="Budget">
+        <button class="rm" style="color:var(--sea)" data-toyear="${i}">Make yearly</button>
         <button class="iconbtn" data-del="${i}" aria-label="Remove ${esc(c.name)}" style="color:var(--red)">✕</button></div>`).join('')}
     <button class="tick" id="addEnv" style="min-width:150px">Add envelope</button>
     <div class="sec">Yearly envelopes (€ a year)</div>
-    ${yenvs.map(({c,i})=>`<div style="display:grid;grid-template-columns:1fr 90px 44px;gap:8px;align-items:center;margin-bottom:8px">
+    ${yenvs.map(({c,i})=>`<div style="display:grid;grid-template-columns:1fr 80px auto 40px;gap:6px;align-items:center;margin-bottom:8px">
         <input class="field" data-name="${i}" value="${esc(c.name)}" aria-label="Yearly envelope name">
         <input class="field" inputmode="decimal" data-set="ycat:${i}" value="${num(c.budgetYear)}" aria-label="Yearly budget">
+        ${c.fund==='carfund'||c.fund==='bigfund'?'<span class="note" style="font-size:12px">own pot</span>':`<button class="rm" style="color:var(--sea)" data-tomonth="${i}">Make monthly</button>`}
         <button class="iconbtn" data-del="${i}" aria-label="Remove ${esc(c.name)}" style="color:var(--red)">✕</button></div>`).join('')}
     <button class="tick" id="addYEnv" style="min-width:150px">Add yearly envelope</button>
-    <div class="sec">Savings (€ a month)</div><div class="grid">${s.savings.map((x,i)=>row(x.name,'sav:'+i,x.amount)).join('')}</div>
+    <div class="sec">Savings (€ a month)</div><div class="grid">${s.savings.map((x,i)=>x.auto?`<span>${esc(x.name)}</span><span class="note">${eur(savAmount(x))}, automatic</span>`:row(x.name,'sav:'+i,x.amount)).join('')}</div>
     <div class="sec">Fixed costs (€ a month)</div><div class="grid">${s.fixed.map((x,i)=>row(x.name,'fix:'+i,x.amount)).join('')}</div>
     <div class="sec">Balances and goals</div><div class="grid">
       ${row('Euro savings starting balance (€)','pot:emerg:start',s.pots.emerg.start)}
@@ -841,7 +879,9 @@ $('setForm').onclick=e=>{
     draft.categories.push({id:newId('c'),name:'New envelope',budget:0,color:PALETTE[n%PALETTE.length]}); settingsForm();
     const last=[...document.querySelectorAll('#setForm [data-name]')].pop(); if(last){ last.focus(); last.select(); } }
   if(t.id==='addYEnv'){ readForm(); const i=draft.categories.findIndex(c=>c.id==='carfix');
-    draft.categories.splice(i>=0?i:draft.categories.length,0,{id:newId('y'),name:'New yearly envelope',budget:0,yearly:true,budgetYear:0}); settingsForm(); }
+    draft.categories.splice(i>=0?i:draft.categories.length,0,{id:newId('y'),name:'New yearly envelope',budget:0,yearly:true,budgetYear:0,fund:'yearfund'}); settingsForm(); }
+  if(t.dataset.toyear){ readForm(); const c=draft.categories[+t.dataset.toyear]; c.yearly=true; c.fund='yearfund'; c.budgetYear=Math.round(num(c.budget)*12); c.budget=0; settingsForm(); }
+  if(t.dataset.tomonth){ readForm(); const c=draft.categories[+t.dataset.tomonth]; c.yearly=false; delete c.fund; c.budget=Math.round(num(c.budgetYear)/12); c.budgetYear=0; settingsForm(); }
   if(t.dataset.del){ readForm(); draft.categories[+t.dataset.del].archived=true; settingsForm(); }
 };
 $('saveSet').onclick=()=>{ readForm(); w(fb.setDoc(R.settings,draft)); $('setSheet').classList.remove('open'); };
@@ -1248,7 +1288,7 @@ function envRender(){
   $('envList').classList.toggle('all', envAll);
   $('envList').innerHTML = show.length ? show.map(e=>`<div class="row"><div class="rowhead"><span class="name">${esc(e.note||c.name)}</span><span class="amt"><b>${eur(e.eur)}</b></span></div>
     <div class="rowhead"><span class="meta">${shortDate(e.date)}${e.cur==='USD'?', $'+num(e.orig).toFixed(2):''}${e.by?', '+esc(e.by):''}</span>
-    <button class="rm" data-rm="${esc(e.id)}">Remove</button></div></div>`).join('')
+    <span><button class="rm" style="color:var(--sea);margin-right:14px" data-edit="${esc(e.id)}">Edit</button><button class="rm" data-rm="${esc(e.id)}">Remove</button></span></div></div>`).join('')
     : `<div class="empty">Nothing spent here in ${monthName(view)} yet.</div>`;
   $('envMore').hidden = list.length<=5;
   $('envMore').textContent = envAll ? 'Show fewer' : `Show all ${list.length}`;
