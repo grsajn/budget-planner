@@ -209,7 +209,7 @@ label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
     <button class="tick" style="min-width:150px" id="openStatement">Import statement</button>
   </div>
   <div class="status" id="status"></div>
-  <div class="status" style="opacity:.6">App version 2026-10-25 (income)</div>
+  <div class="status" style="opacity:.6">App version 2026-10-26 (funds)</div>
 </div>
 <button class="fab" id="openAdd">Add expense</button>
 </div>
@@ -347,7 +347,7 @@ const DEFAULTS = {
     {id:'groc',name:'Groceries & drugstore',budget:600,color:PALETTE[0]},
     {id:'eat',name:'Eating out & cafés',budget:380,color:PALETTE[1]},
     {id:'shop',name:'Shopping',budget:450,color:PALETTE[2]},
-    {id:'big',name:'Big purchases pot',budget:300,color:PALETTE[3]},
+    {id:'big',name:'Big purchase (paid from fund)',budget:0,fund:'bigfund',color:PALETTE[3]},
     {id:'bills',name:'Bills',budget:300,color:PALETTE[4]},
     {id:'car',name:'Transportation (fuel, tolls, parking, taxi)',budget:450,color:PALETTE[5]},
     {id:'travel',name:'Travel & Dubrovnik',budget:550,color:PALETTE[6]},
@@ -366,11 +366,12 @@ const DEFAULTS = {
   savings:[
     {id:'emerg',name:'Euro savings (house / emergency)',amount:400},
     {id:'carfund',name:'Car upkeep fund (insurance, service, tyres)',amount:290},
+    {id:'bigfund',name:'Big purchases fund',amount:300},
     {id:'family',name:'Family investing (US account)',amount:360},
     {id:'son',name:"Son's account",amount:100}
   ],
   emergGoal:15000, momTarget:25000, balanceStart:'2026-10',
-  pots:{emerg:{start:0},carfund:{start:0},family:{value:50000,valueDate:'2026-10-23'},son:{value:11000,valueDate:'2026-10-23'}}
+  pots:{emerg:{start:0},carfund:{start:0},bigfund:{start:0},family:{value:50000,valueDate:'2026-10-23'},son:{value:11000,valueDate:'2026-10-23'}}
 };
 
 // ---------- helpers ----------
@@ -400,6 +401,13 @@ function normalize(src){
     if(i>=0) s.categories.splice(i,0,cash); else s.categories.push(cash); }
   if(!s.categories.some(c=>c.id==='carfix')) s.categories.push(clone(DEFAULTS.categories.find(c=>c.id==='carfix')));
   s.incomes.forEach(i=>{ if(i.fixed==null) i.fixed = i.id==='t'; });
+  if(!s.bigFundV){
+    const big=s.categories.find(c=>c.id==='big'), was=big&&!big.fund ? num(big.budget) : 300;
+    if(big){ big.fund='bigfund'; big.budget=0; big.name='Big purchase (paid from fund)'; }
+    if(!s.savings.some(v=>v.id==='bigfund')){ const i=s.savings.findIndex(v=>v.id==='carfund');
+      s.savings.splice(i>=0?i+1:s.savings.length,0,{id:'bigfund',name:'Big purchases fund',amount:was||300}); }
+    s.bigFundV=true;
+  }
   DEFAULTS.savings.forEach(d=>{ if(!s.savings.some(v=>v.id===d.id)) s.savings.push(clone(d)); });
   ['v2','v3','v4','v5','emergStart','carfundStart'].forEach(k=>delete s[k]);
   return s;
@@ -466,6 +474,7 @@ function startSync(){
   unsubs.push(fb.onSnapshot(R.settings,o,snap=>{
     if(!snap.exists()){ if(!snap.metadata.fromCache) w(fb.setDoc(R.settings, normalize(DEFAULTS))); return; }
     state.settings = normalize(snap.data()); track('s',snap); render(); migrateCash();
+    if(!snap.data().bigFundV && !snap.metadata.fromCache) w(fb.setDoc(R.settings, state.settings));
   },fail));
   unsubs.push(fb.onSnapshot(R.expenses,o,snap=>{ state.expenses=snap.docs.map(d=>({...d.data(),id:d.id})); track('e',snap); render();
     if(!snap.metadata.fromCache){ expFromServer=true; migrateCash(); } },fail));
@@ -486,12 +495,15 @@ function balances(){
   const s=state.settings, P=s.pots, rate=s.usdRate||1.14;
   const b={};
   b.emerg = num(P.emerg.start) + sum(moves('emerg'),x=>x.amount);
-  b.carfund = num(P.carfund.start) + sum(moves('carfund'),x=>x.amount) - sum(state.expenses.filter(e=>e.cat==='carfix'),e=>e.eur);
+  b.funds={};
+  s.categories.filter(c=>c.fund).forEach(c=>{ const f=c.fund;
+    b.funds[f] = num((P[f]||{}).start) + sum(moves(f),x=>x.amount) - sum(state.expenses.filter(e=>e.cat===c.id),e=>num(e.eur)); });
+  b.carfund = b.funds.carfund||0;
   const usdVal = id => num(P[id].value) + sum(moves(id).filter(x=>x.date>(P[id].valueDate||'')),x=>x.amount*rate);
   b.family = usdVal('family'); b.son = usdVal('son');
   b.paid = sum(state.payouts,p=>p.usd); b.owed = Math.max(s.momTarget-b.paid,0);
   b.share = b.family - b.owed;
-  b.total = b.emerg + b.carfund + b.share/rate + b.son/rate;
+  b.total = b.emerg + sum(Object.values(b.funds)) + b.share/rate + b.son/rate;
   return b;
 }
 const fixedActive = f => !f.until || view <= f.until;
@@ -574,7 +586,10 @@ function render(){
   const b=balances(), rate=s.usdRate||1.14, P=s.pots;
   const potLine = {
     emerg: `<div class="note">${eur(b.emerg)} of ${eur(s.emergGoal)} goal</div><div class="bar"><i style="width:${s.emergGoal?Math.min(Math.max(b.emerg,0)/s.emergGoal,1)*100:0}%"></i></div>`,
-    carfund: `<div class="note" style="${b.carfund<0?'color:var(--red)':''}">Balance ${eur(b.carfund)}. Log insurance, service and tyres as "Car upkeep" expenses.</div>`,
+    ...Object.fromEntries(s.categories.filter(c=>c.fund).map(c=>{ const bal=b.funds[c.fund]||0;
+      const hint = c.fund==='carfund' ? 'Log insurance, service and tyres as "Car upkeep" expenses.' : c.fund==='bigfund' ? 'Log big purchases as "Big purchase" expenses.' : '';
+      return [c.fund, `<div class="note" style="${bal<0?'color:var(--red)':''}">Balance ${eur(bal)}. ${hint}</div>
+        <div class="note"><button class="rm" style="color:var(--sea)" data-fundcat="${c.id}">Show what was paid from it</button></div>`]; })),
     family: `<div class="note">${usd(b.family)} in the account (about ${eur(b.family/rate)}). Your share ${usd(b.share)}.</div>
       <div class="note">Value from ${shortDate(P.family.valueDate)}, plus transfers since. <button class="rm" style="color:var(--sea)" data-val="family">Update value</button></div>`,
     son: `<div class="note">${usd(b.son)} (about ${eur(b.son/rate)})</div>
@@ -685,6 +700,7 @@ document.addEventListener('click',e=>{
     incEdit=inc.id; $('incTitle').textContent=inc.name;
     $('incNote').textContent=`What actually came in for ${monthName(view)}? This replaces the ${p.kind==='actual'?'amount from the statement':'planned '+eur(inc.amount)} for this month.`;
     $('incAmt').value = p.kind==='planned' ? '' : Math.round(p.amount*100)/100; $('incSheet').classList.add('open'); setTimeout(()=>$('incAmt').focus(),150); return; }
+  if(t.dataset.fundcat){ openEnv(t.dataset.fundcat); return; }
   if(t.dataset.fix){ const id=t.dataset.fix, cur=!!((state.months[view]||{}).fixedDone||{})[id];
     w(fb.setDoc(fb.doc(R.months,view),{fixedDone:{[id]: cur ? fb.deleteField() : true}},{merge:true})); }
   if(t.dataset.rm){
@@ -747,7 +763,7 @@ function settingsForm(){
     <div class="sec">Fixed costs (€ a month)</div><div class="grid">${s.fixed.map((x,i)=>row(x.name,'fix:'+i,x.amount)).join('')}</div>
     <div class="sec">Balances and goals</div><div class="grid">
       ${row('Euro savings starting balance (€)','pot:emerg:start',s.pots.emerg.start)}
-      ${row('Car fund starting balance (€)','pot:carfund:start',s.pots.carfund.start)}
+      ${s.categories.filter(c=>c.fund).map(c=>row(((s.savings.find(v=>v.id===c.fund)||{}).name||c.fund)+' starting balance (€)','pot:'+c.fund+':start',(s.pots[c.fund]||{}).start||0)).join('')}
       ${row('Euro savings goal (€)','o:emergGoal',s.emergGoal)}
       ${row('Mom payout total ($)','o:momTarget',s.momTarget)}
       ${row('Dollars per euro','o:usdRate',s.usdRate)}
@@ -763,7 +779,7 @@ function readForm(){
     if(p[0]==='cat') s.categories[+p[1]].budget=v;
     if(p[0]==='sav') s.savings[+p[1]].amount=v;
     if(p[0]==='fix') s.fixed[+p[1]].amount=v;
-    if(p[0]==='pot') s.pots[p[1]][p[2]]=v;
+    if(p[0]==='pot'){ s.pots[p[1]]=s.pots[p[1]]||{}; s.pots[p[1]][p[2]]=v; }
     if(p[0]==='o') s[p[1]] = p[1]==='usdRate' ? (v||1.14) : v;
   });
   document.querySelectorAll('#setForm [data-incfix]').forEach(cb=>{ s.incomes[+cb.dataset.incfix].fixed=cb.checked; });
@@ -1166,7 +1182,10 @@ function envRender(){
     .sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0));
   const sp=sum(list,e=>num(e.eur)), pct=c.budget?sp/c.budget:(sp>0?2:0), rem=c.budget-sp;
   $('envTitle').textContent=c.name;
-  $('envSummary').innerHTML=`<div class="rowhead"><span class="name">${monthName(view)}</span><span class="amt"><b>${eur(sp)}</b> / ${eur(c.budget)}</span></div>
+  if(c.fund){ const bal=balances().funds[c.fund]||0;
+    $('envSummary').innerHTML=`<div class="rowhead"><span class="name">${monthName(view)}</span><span class="amt"><b>${eur(sp)}</b> paid from the fund</span></div>
+      <div class="left" style="${bal<0?'color:var(--red)':''}">Fund balance now ${eur(bal)}${list.length?', '+list.length+' expense'+(list.length>1?'s':'')+' this month':''}</div>`;
+  } else $('envSummary').innerHTML=`<div class="rowhead"><span class="name">${monthName(view)}</span><span class="amt"><b>${eur(sp)}</b> / ${eur(c.budget)}</span></div>
     <div class="bar"><i class="${pct>1?'over':pct>.85?'warn':''}" style="width:${Math.min(pct,1)*100}%"></i></div>
     <div class="left ${rem<0?'over':''}">${rem<0?eur(-rem)+' over':eur(rem)+' left'}${list.length?', '+list.length+' expense'+(list.length>1?'s':''):''}</div>`;
   const show = envAll ? list : list.slice(0,5);
@@ -1256,7 +1275,7 @@ function statRender(){
   $('stDonut').innerHTML=donutSvg(slices,total);
   $('stLegend').innerHTML = slices.length ? slices.map(x=>`<div class="rowhead"><span><span class="sw" style="background:${x.color}"></span>${esc(x.name)}</span>
       <span class="amt"><b>${eur(x.v)}</b> ${Math.round(x.v/total*100)}%</span></div>`).join('')
-      + `<div class="note" style="margin-top:6px">${eur(t.spent)} of ${eur(t.budget)} spending budget${t.fund?', plus '+eur(t.fund)+' from the car fund':''}.</div>`
+      + `<div class="note" style="margin-top:6px">${eur(t.spent)} of ${eur(t.budget)} spending budget${t.fund?', plus '+eur(t.fund)+' paid from savings funds':''}.</div>`
     : `<div class="empty" style="text-align:center">No expenses in ${monthName(stView)}.</div>`;
   // last 6 months ending at the viewed month, never before the start month
   const months=[]; let k=stView; while(months.length<6 && k>=min){ months.unshift(k); k=shiftMonth(k,-1); }
@@ -1271,10 +1290,10 @@ function statRender(){
   $('stBars').innerHTML=`<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Income, spending, fixed costs and savings per month">
     <line x1="0" x2="${W}" y1="${H-bottom}" y2="${H-bottom}" stroke="var(--line)"/>${bars}</svg>`
     + (months.length<2 ? `<div class="note">More months appear here as the budget runs. It starts in ${monthName(min)}.</div>`:'');
-  const left=t.income-t.spent-t.fixed-t.saved-t.fund;
+  const left=t.income-t.spent-t.fixed-t.saved;
   $('stDetail').innerHTML=`<div class="rowhead"><span>Income</span><span>${eur(t.income)}</span></div>
     <div class="rowhead"><span>Spending</span><span>−${eur(t.spent)}</span></div>
-    ${t.fund?`<div class="rowhead"><span>Car upkeep (from fund)</span><span>−${eur(t.fund)}</span></div>`:''}
+    ${t.fund?`<div class="rowhead" style="color:var(--muted)"><span>Paid from savings funds</span><span>${eur(t.fund)}</span></div>`:''}
     <div class="rowhead"><span>Fixed costs</span><span>−${eur(t.fixed)}</span></div>
     <div class="rowhead"><span>Saved</span><span>−${eur(t.saved)}</span></div>
     <div class="rowhead total"><span>Left over in ${monthName(stView)}</span><span style="color:${left<0?'var(--red)':'inherit'}">${eur(left)}</span></div>`;
